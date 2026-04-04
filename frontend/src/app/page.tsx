@@ -107,6 +107,41 @@ export default function Home() {
     };
   }, []);
 
+  // ─── ?debug=1 URL flag ─────────────────────────────────────────
+  const [showDebug, setShowDebug] = useState(false);
+  useEffect(() => {
+    setShowDebug(window.location.search.includes("debug=1"));
+  }, []);
+
+  // ─── Ctrl+Enter → Analyze ──────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        // Trigger analyze if not busy
+        const analyzeBtn = document.getElementById("analyze-button");
+        if (analyzeBtn && !(analyzeBtn as HTMLButtonElement).disabled) analyzeBtn.click();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  // ─── Human-readable error transformer ────────────────────────
+  function transformError(raw: string): string {
+    if (/chainId|chain_id|wrong.*chain|switch.*chain/i.test(raw))
+      return "Please switch your wallet to the " + (network === "studio" ? "Studio" : "Bradbury") + " network and try again.";
+    if (/user rejected|user denied|rejected the request/i.test(raw))
+      return "Transaction cancelled. Please approve the wallet popup to continue.";
+    if (/insufficient funds|not enough.*balance/i.test(raw))
+      return "Your wallet doesn't have enough funds to pay for this transaction.";
+    if (/timeout|timed out/i.test(raw))
+      return "The network took too long to respond. Try again — Studio validators usually finish in ~35 seconds.";
+    if (/no wallet|install.*metamask|install.*rabby/i.test(raw))
+      return "No wallet detected. Please install Rabby or MetaMask and refresh the page.";
+    return raw;
+  }
+
   // ─── Network Switch ──────────────────────────────────────────
 
   const handleNetworkChange = useCallback((newNetwork: NetworkType) => {
@@ -185,9 +220,9 @@ export default function Home() {
       setResult(data);
       logGL("ACTION ✅ Analyze complete", { riskLevel: data.risk_level, issues: data.issues.length });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Analysis failed.";
-      setError(message);
-      logGL("ACTION ❌ Analyze failed", { error: message });
+      const raw = err instanceof Error ? err.message : "Analysis failed.";
+      setError(transformError(raw));
+      logGL("ACTION ❌ Analyze failed", { error: raw });
     } finally {
       setIsLoading(false);
     }
@@ -507,8 +542,6 @@ export default function Home() {
                 isSimulating={isSimulating}
                 onFix={handleFix}
                 isFixing={isFixing}
-                code={code}
-                prediction={prediction}
                 fixResult={fixResult}
                 consensusStatus={consensusStatus}
                 consensusElapsed={consensusElapsed}
@@ -518,8 +551,8 @@ export default function Home() {
             </div>
           </div>
 
-          {/* ─── GenLayer Flow Inspector Debug Panel ─── */}
-          <DebugPanel className="mt-4 shrink-0" />
+          {/* ─── GenLayer Flow Inspector (hidden unless ?debug=1) ─── */}
+          {showDebug && <DebugPanel className="mt-4 shrink-0" />}
         </div>
       </main>
     </div>
