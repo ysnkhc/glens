@@ -446,16 +446,19 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
       console.log("TX HASH:", txHash);
       logGL("ANALYZE → TX SENT", { txHash });
 
-      const receipt = await client.waitForTransactionReceipt({
-        hash: txHash,
-        status: TransactionStatus.ACCEPTED,
-        timeout: 90_000, // 90s — Studio validators take ~35s, Bradbury may take longer
-      });
+      // ─── Poll for consensus (same engine as simulate) ──────────────────
+      // waitForTransactionReceipt is unreliable: it waits for a specific enum
+      // value that the TX may never reach (e.g. FINALIZED vs ACCEPTED mismatch).
+      // Our pollConsensusStatus handles all terminal states correctly.
+      const analyzePollResult = await pollConsensusStatus(
+        String(txHash),
+        client,
+        undefined, // no UI progress needed for analyze
+      );
 
-      // 🔴 AUDIT LOG: After receipt
-      console.log("RECEIPT:", receipt);
-      await new Promise(resolve => setTimeout(resolve, 1200));
-      logGL("ANALYZE → TX ACCEPTED", { txHash });
+      if (analyzePollResult.consensus !== "AGREED") {
+        throw new Error(`On-chain analysis did not reach consensus (${analyzePollResult.consensus}). Using client fallback.`);
+      }
 
       const readFn = getReadMethod("analyze_contract");
       const resultStr = await client.readContract({
