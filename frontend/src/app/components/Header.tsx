@@ -73,21 +73,6 @@ export default function Header({ walletAddress, isConnecting, onConnect, onDisco
 
         {/* Right side: badges + wallet */}
         <div className="flex items-center gap-3">
-          {/* GenVM Linter Link */}
-          <a
-            href="https://github.com/yeagerai/genvm-linter"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-full text-[11px] font-semibold border bg-slate-800/40 border-slate-700/30 text-slate-400 hover:text-slate-200 hover:border-slate-600/50 hover:bg-slate-800/60 transition-all duration-200"
-            title="Official GenVM Linter by YeagerAI"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-              <polyline points="15,3 21,3 21,9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-            GenVM Linter
-          </a>
 
           {/* Depends Hash Badge */}
           <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[10px] font-mono text-slate-600 bg-slate-800/20 border border-slate-800/30" title="Bradbury Depends hash">
