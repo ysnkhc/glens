@@ -11,11 +11,12 @@ interface NetworkSelectorProps {
 export default function NetworkSelector({ network, onNetworkChange }: NetworkSelectorProps) {
   return (
     <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-900/60 border border-slate-700/30 backdrop-blur-sm">
+
       {/* Studio button */}
       <button
         id="network-studio-btn"
         onClick={() => onNetworkChange("studio")}
-        title="GenLayer Studio — fast local development"
+        title="GenLayer Studio — fast & stable public network"
         className={`
           relative flex flex-col items-start px-3 py-1.5 rounded-lg text-left transition-all duration-200 cursor-pointer
           ${network === "studio"
@@ -24,7 +25,6 @@ export default function NetworkSelector({ network, onNetworkChange }: NetworkSel
         `}
       >
         <div className="flex items-center gap-1.5">
-          {/* Status dot */}
           <span className="relative flex h-1.5 w-1.5">
             {network === "studio" && (
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
@@ -42,7 +42,7 @@ export default function NetworkSelector({ network, onNetworkChange }: NetworkSel
         <span className={`text-[9px] pl-3 ${
           network === "studio" ? "text-emerald-500/80" : "text-slate-600"
         }`}>
-          Local · Fast
+          Fast &amp; Stable
         </span>
       </button>
 
@@ -50,7 +50,7 @@ export default function NetworkSelector({ network, onNetworkChange }: NetworkSel
       <button
         id="network-bradbury-btn"
         onClick={() => onNetworkChange("bradbury")}
-        title="Bradbury testnet — live on-chain, may be slow"
+        title="Bradbury testnet — real LLM validators, may be slow"
         className={`
           relative flex flex-col items-start px-3 py-1.5 rounded-lg text-left transition-all duration-200 cursor-pointer
           ${network === "bradbury"
@@ -76,7 +76,7 @@ export default function NetworkSelector({ network, onNetworkChange }: NetworkSel
         <span className={`text-[9px] pl-3 ${
           network === "bradbury" ? "text-amber-500/80" : "text-slate-600"
         }`}>
-          Testnet · Live
+          Real Validators
         </span>
       </button>
     </div>

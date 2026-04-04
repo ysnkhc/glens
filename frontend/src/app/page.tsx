@@ -11,7 +11,6 @@ import { SAMPLE_CONTRACTS } from "./components/SampleContracts";
 import {
   connectWallet,
   getConnectedAddress,
-  STUDIO_DEV_ADDRESS,
 } from "@/lib/genlayer";
 import type { NetworkType } from "@/lib/genlayer";
 import {
@@ -79,15 +78,11 @@ export default function Home() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
 
-  // Auto-provision on mount: Studio uses local account, Bradbury checks wallet
+  // Auto-detect wallet on mount
   useEffect(() => {
-    if (network === "studio") {
-      setWalletAddress(STUDIO_DEV_ADDRESS);
-    } else {
-      getConnectedAddress("bradbury").then((addr) => {
-        if (addr) setWalletAddress(addr);
-      });
-    }
+    getConnectedAddress().then((addr) => {
+      if (addr) setWalletAddress(addr);
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -124,15 +119,10 @@ export default function Home() {
     setFixToast(null);
     setError(null);
     setConsensusStatus(null);
-    // Auto-provision wallet for the new network
-    if (newNetwork === "studio") {
-      setWalletAddress(STUDIO_DEV_ADDRESS);
-    } else {
-      // Check if Rabby is already connected
-      getConnectedAddress("bradbury").then((addr) => {
-        setWalletAddress(addr); // may be null — user will click Connect
-      });
-    }
+    // Check if wallet is already connected — user may need to re-connect on new chain
+    getConnectedAddress().then((addr) => {
+      setWalletAddress(addr);
+    });
     logGL("ACTION → Network changed", { network: newNetwork });
   }, []);
 
@@ -449,7 +439,11 @@ export default function Home() {
                   <line x1="12" y1="9" x2="12" y2="13" />
                   <line x1="12" y1="17" x2="12.01" y2="17" />
                 </svg>
-                Bradbury testnet validators may be slow or unavailable. Use Studio for reliable results.
+                {network === "bradbury" ? (
+                  "Uses real LLM validators — may take 2–5 minutes. Switch to Studio for fast results."
+                ) : (
+                  "Uses GenLayer Studio validators — fast and reliable."
+                )}
               </div>
             )}
 

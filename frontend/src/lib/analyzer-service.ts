@@ -11,7 +11,7 @@
  * - NEVER use requests.get → must use gl.nondet.web
  */
 
-import { CONTRACT_ADDRESS, createWalletClient, getLastEvmTxHash, pollForReceipt, extractGenLayerTxId, pollConsensusStatus, STUDIO_DEV_ADDRESS } from "./genlayer";
+import { CONTRACT_ADDRESS, createWalletClient, getLastEvmTxHash, pollForReceipt, extractGenLayerTxId, pollConsensusStatus } from "./genlayer";
 import type { NetworkType } from "./genlayer";
 import { parseContract, buildMetadata } from "./parser";
 import { runRules } from "./rules-engine";
@@ -194,8 +194,6 @@ function isContractReady(walletAddress?: string | null, network: NetworkType = "
   if (!addr || addr === "" || !addr.startsWith("0x") || addr.length <= 40 || addr === "YOUR_CONTRACT_ADDRESS") {
     return false;
   }
-  // Studio uses a pre-funded local account — no external wallet required
-  if (network === "studio") return true;
   return !!walletAddress;
 }
 
@@ -425,7 +423,7 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
 
   if (isContractReady(walletAddress, network)) {
     try {
-      const client = createWalletClient(walletAddress || STUDIO_DEV_ADDRESS, network);
+      const client = createWalletClient(walletAddress!, network);
       const summary = buildMetadata(parsed);
       const safeSummary = summary.slice(0, 200);
 
@@ -517,7 +515,7 @@ export async function explainContract(code: string, walletAddress?: string | nul
   }
 
   try {
-    const client = createWalletClient(walletAddress || STUDIO_DEV_ADDRESS, network);
+    const client = createWalletClient(walletAddress!, network);
     const parsed = parseContract(code);
     const summary = buildMetadata(parsed);
     const safeSummary = summary.slice(0, 200);
@@ -655,7 +653,7 @@ export async function simulateConsensus(
   }
 
   // ─── Single-TX Real Consensus ──────────────────────────────
-  const client = createWalletClient(walletAddress || STUDIO_DEV_ADDRESS, network);
+  const client = createWalletClient(walletAddress!, network);
   const safePrompt = prompts[0].slice(0, 200);
   const timer = createTxTimer("simulate_consensus");
   const startTime = Date.now();
@@ -1114,7 +1112,7 @@ export async function fixContract(code: string, walletAddress?: string | null, n
   // Optionally enhance with on-chain AI suggestions
   if (isContractReady(walletAddress, network)) {
     try {
-      const client = createWalletClient(walletAddress || STUDIO_DEV_ADDRESS, network);
+      const client = createWalletClient(walletAddress!, network);
       const safeIssues = allIssues.map((i) => `- ${i}`).join("\n").slice(0, 200);
 
       const timer = createTxTimer("fix_contract");

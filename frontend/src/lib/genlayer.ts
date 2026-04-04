@@ -4,8 +4,9 @@
  * ARCHITECTURE:
  * Two networks are supported:
  *
- *   studio   → GenLayer Studio (local, http://localhost:4000)
- *              Uses a pre-funded local dev account — NO wallet popup needed.
+ *   studio   → GenLayer Studio (studionet, public hosted by GenLayer)
+ *              Chain ID: 61999, RPC: https://studio.genlayer.com/api
+ *              Uses Rabby/MetaMask signing on studionet — fast validators.
  *
  *   bradbury → GenLayer Bradbury testnet
  *              Hybrid provider: Rabby signs, GenLayer RPC handles receipts.
@@ -13,15 +14,13 @@
  */
 
 import { createClient } from "genlayer-js";
-import { testnetBradbury, localnet } from "genlayer-js/chains";
-import { privateKeyToAccount } from "viem/accounts";
+import { testnetBradbury, studionet } from "genlayer-js/chains";
 
 // ─── Network Type ─────────────────────────────────────────────
 export type NetworkType = "bradbury" | "studio";
 
 /**
  * Contract addresses per network.
- * Studio address will be filled after deployment.
  */
 export const CONTRACT_ADDRESS: Record<NetworkType, string> = {
   bradbury: "0x4aa1046C8751e043bAEe76b4FD0F1D4188aD8C2e",
@@ -30,38 +29,40 @@ export const CONTRACT_ADDRESS: Record<NetworkType, string> = {
 
 /**
  * RPC endpoints per network.
+ * studionet's public RPC is handled by the genlayer-js SDK automatically.
  */
 const RPC: Record<NetworkType, string> = {
   bradbury: "https://rpc-bradbury.genlayer.com",
-  studio:   "http://localhost:4000",
+  studio:   "https://studio.genlayer.com/api",
 };
-
-/**
- * GenLayer Studio pre-funded dev account.
- * This is the standard public dev key used in GenLayer local environments.
- * NEVER use for mainnet — local dev only.
- */
-const STUDIO_DEV_PRIVATE_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as const;
-export const STUDIO_DEV_ADDRESS = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 
 /**
  * Return the correct genlayer-js chain config for the given network.
  */
 export function getChain(network: NetworkType) {
-  return network === "studio" ? localnet : testnetBradbury;
+  return network === "bradbury" ? testnetBradbury : studionet;
 }
 
 /**
- * GenLayer Bradbury chain config for MetaMask/Rabby (wallet_addEthereumChain).
+ * Chain configs for wallet_addEthereumChain (MetaMask/Rabby).
  */
-export const CHAIN_CONFIG = {
-  chainId: `0x${testnetBradbury.id.toString(16)}`,
-  chainName: "GenLayer Testnet Bradbury",
-  rpcUrls: [RPC.bradbury],
-  nativeCurrency: {
-    name: "GEN",
-    symbol: "GEN",
-    decimals: 18,
+export const CHAIN_CONFIG: Record<NetworkType, {
+  chainId: string;
+  chainName: string;
+  rpcUrls: string[];
+  nativeCurrency: { name: string; symbol: string; decimals: number };
+}> = {
+  bradbury: {
+    chainId: `0x${testnetBradbury.id.toString(16)}`,
+    chainName: "GenLayer Testnet Bradbury",
+    rpcUrls: [RPC.bradbury],
+    nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 },
+  },
+  studio: {
+    chainId: `0x${studionet.id.toString(16)}`, // 0xF22F = 61999
+    chainName: "GenLayer Studio Network",
+    rpcUrls: [RPC.studio],
+    nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 },
   },
 };
 
@@ -86,19 +87,47 @@ export function getLastEvmTxHash(): string | null {
 }
 
 /**
- * Request wallet connection via MetaMask/Rabby (EIP-1193).
- * Only used for Bradbury — Studio uses a local account.
+ * Switch/add the given network to the user's wallet (Rabby/MetaMask).
  */
-export async function connectWallet(network: NetworkType = "bradbury"): Promise<string | null> {
-  // Studio: return the local dev account immediately — no popup
-  if (network === "studio") {
-    return STUDIO_DEV_ADDRESS;
-  }
+async function ensureWalletNetwork(network: NetworkType): Promise<void> {
+  const ethereum = getEthereum();
+  if (!ethereum) return;
 
-  // Bradbury: full Rabby/MetaMask flow
+  const cfg = CHAIN_CONFIG[network];
+  try {
+    await ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: cfg.chainId }],
+    });
+  } catch (switchError: unknown) {
+    const err = switchError as { code?: number };
+    if (err.code === 4902 || err.code === -32603) {
+      await ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [cfg],
+      });
+      await ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: cfg.chainId }],
+      });
+    } else if (err.code !== 4001) {
+      try {
+        await ethereum.request({ method: "wallet_addEthereumChain", params: [cfg] });
+      } catch {
+        console.warn(`Could not auto-add ${network} network.`);
+      }
+    }
+  }
+}
+
+/**
+ * Request wallet connection via MetaMask/Rabby.
+ * Works for both Studio (studionet) and Bradbury — same flow, different chain.
+ */
+export async function connectWallet(network: NetworkType = "studio"): Promise<string | null> {
   const ethereum = getEthereum();
   if (!ethereum) {
-    throw new Error("No wallet found. Please install MetaMask or Rabby to use Bradbury testnet.");
+    throw new Error("No wallet found. Please install MetaMask or Rabby to use this dApp.");
   }
 
   try {
@@ -110,34 +139,8 @@ export async function connectWallet(network: NetworkType = "bradbury"): Promise<
       throw new Error("No accounts found. Please unlock your wallet.");
     }
 
-    // Switch to GenLayer Bradbury network — add if not present
-    try {
-      await ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: CHAIN_CONFIG.chainId }],
-      });
-    } catch (switchError: unknown) {
-      const err = switchError as { code?: number };
-      if (err.code === 4902 || err.code === -32603) {
-        await ethereum.request({
-          method: "wallet_addEthereumChain",
-          params: [CHAIN_CONFIG],
-        });
-        await ethereum.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: CHAIN_CONFIG.chainId }],
-        });
-      } else if (err.code !== 4001) {
-        try {
-          await ethereum.request({
-            method: "wallet_addEthereumChain",
-            params: [CHAIN_CONFIG],
-          });
-        } catch {
-          console.warn("Could not auto-add GenLayer network.");
-        }
-      }
-    }
+    // Auto-switch to the correct network
+    await ensureWalletNetwork(network);
 
     return accounts[0];
   } catch (err: unknown) {
@@ -151,14 +154,8 @@ export async function connectWallet(network: NetworkType = "bradbury"): Promise<
 
 /**
  * Get the currently connected address (without prompting).
- * For Studio, always returns the dev address.
- * For Bradbury, checks the injected wallet.
  */
-export async function getConnectedAddress(network: NetworkType = "bradbury"): Promise<string | null> {
-  if (network === "studio") {
-    return STUDIO_DEV_ADDRESS;
-  }
-
+export async function getConnectedAddress(): Promise<string | null> {
   const ethereum = getEthereum();
   if (!ethereum) return null;
 
@@ -222,9 +219,6 @@ export async function pollForReceipt(
 
 /**
  * Extract GenLayer txId from EVM receipt logs.
- *
- * The TransactionCreated event is emitted by the consensus router at
- * 0x1d301acef55eaf7df5d3741659d426f51061ec8d on Bradbury.
  */
 export function extractGenLayerTxId(receipt: Record<string, unknown>): string | null {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -252,7 +246,6 @@ export function extractGenLayerTxId(receipt: Record<string, unknown>): string | 
 
 /**
  * Poll GenLayer consensus status directly via RPC.
- * Bypasses the SDK's broken waitForTransactionReceipt.
  */
 export interface ConsensusResult {
   consensus: "AGREED" | "DISAGREED" | "TIMEOUT" | "ERROR" | "CANCELLED";
@@ -281,12 +274,7 @@ export async function pollConsensusStatus(
   // eslint-disable-next-line no-constant-condition
   while (true) {
     if (signal?.aborted) {
-      return {
-        consensus: "CANCELLED",
-        txId,
-        status: "CANCELLED",
-        statusName: "Polling cancelled by user",
-      };
+      return { consensus: "CANCELLED", txId, status: "CANCELLED", statusName: "Polling cancelled by user" };
     }
 
     const elapsed = Date.now() - start;
@@ -322,24 +310,14 @@ export async function pollConsensusStatus(
       if (TERMINAL_AGREED.includes(statusName)) {
         return {
           consensus: resultName === "AGREE" ? "AGREED" : "DISAGREED",
-          txId,
-          status: statusName,
-          statusName,
-          resultName,
+          txId, status: statusName, statusName, resultName,
           executionResult: tx.txExecutionResultName,
           data: tx,
         };
       }
 
       if (TERMINAL_FAILED.includes(statusName)) {
-        return {
-          consensus: "DISAGREED",
-          txId,
-          status: statusName,
-          statusName,
-          resultName,
-          data: tx,
-        };
+        return { consensus: "DISAGREED", txId, status: statusName, statusName, resultName, data: tx };
       }
 
     } catch (err) {
@@ -353,19 +331,20 @@ export async function pollConsensusStatus(
   }
 }
 
-// ─── Hybrid EIP-1193 provider (Bradbury only) ────────────────────
+// ─── Hybrid EIP-1193 provider ────────────────────────────────────
 
 /**
  * Hybrid EIP-1193 provider:
  *   eth_sendTransaction → Rabby wallet (popup + signing)
- *   Everything else     → GenLayer Bradbury RPC directly
+ *   Everything else     → GenLayer RPC directly (Studio or Bradbury)
+ *
+ * Used for BOTH Studio and Bradbury — the only difference is the rpcUrl.
  */
 function createHybridProvider(rpcUrl: string): EIP1193Provider {
   let jsonRpcId = 1;
 
   return {
     request: async ({ method, params }: { method: string; params?: unknown[] }) => {
-      // ─── SIGNING: Route to Rabby wallet ────────────────────
       if (method === "eth_sendTransaction") {
         const ethereum = getEthereum();
         if (!ethereum) throw new Error("Wallet not available for signing");
@@ -377,7 +356,7 @@ function createHybridProvider(rpcUrl: string): EIP1193Provider {
             const abiData = txData.slice(10);
             const wordCount = Math.floor(abiData.length / 64);
             console.group("📍 CALLDATA AUDIT");
-            console.log("Total calldata length:", txData.length, "chars (", (txData.length - 10) / 2, "bytes of ABI data)");
+            console.log("Total calldata length:", txData.length);
             console.log("ABI word count:", wordCount);
             for (let i = Math.max(0, wordCount - 4); i < wordCount; i++) {
               const word = abiData.slice(i * 64, (i + 1) * 64);
@@ -400,7 +379,6 @@ function createHybridProvider(rpcUrl: string): EIP1193Provider {
         return txHash;
       }
 
-      // ─── EVERYTHING ELSE: Route to GenLayer RPC directly ───
       const response = await fetch(rpcUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -417,7 +395,6 @@ function createHybridProvider(rpcUrl: string): EIP1193Provider {
       }
 
       const data = await response.json();
-
       if (data.error) {
         throw new Error(data.error.message || JSON.stringify(data.error));
       }
@@ -430,25 +407,15 @@ function createHybridProvider(rpcUrl: string): EIP1193Provider {
 /**
  * Create a GenLayer client for on-chain transactions.
  *
- * Studio:   pre-funded local account — no wallet popup.
- * Bradbury: hybrid Rabby provider — popup + signing.
+ * Both Studio and Bradbury use the hybrid Rabby provider —
+ * the only differences are the chain and the RPC endpoint.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createWalletClient(address: string, network: NetworkType = "bradbury"): any {
+export function createWalletClient(address: string, network: NetworkType = "studio"): any {
   const chain = getChain(network);
   const rpcUrl = RPC[network];
-
-  if (network === "studio") {
-    // Studio: use the pre-funded local account directly
-    const account = privateKeyToAccount(STUDIO_DEV_PRIVATE_KEY);
-    return createClient({
-      chain,
-      account,
-    });
-  }
-
-  // Bradbury: hybrid Rabby provider (unchanged)
   const hybridProvider = createHybridProvider(rpcUrl);
+
   return createClient({
     chain,
     account: address as `0x${string}`,

@@ -81,6 +81,17 @@ export default function Header({ walletAddress, isConnecting, onConnect, onDisco
           {/* Network Selector */}
           <NetworkSelector network={network} onNetworkChange={onNetworkChange} />
 
+          {/* Studio note */}
+          {network === "studio" && (
+            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[10px] font-medium bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
+              </span>
+              Studio validators — fast &amp; reliable
+            </div>
+          )}
+
           {/* Bradbury warning pill */}
           {network === "bradbury" && (
             <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[10px] font-medium bg-amber-500/10 border border-amber-500/20 text-amber-400">
@@ -89,7 +100,7 @@ export default function Header({ walletAddress, isConnecting, onConnect, onDisco
                 <line x1="12" y1="9" x2="12" y2="13" />
                 <line x1="12" y1="17" x2="12.01" y2="17" />
               </svg>
-              Validators may be slow
+              Real LLM validators — may take 2–5 min
             </div>
           )}
 
