@@ -78,7 +78,7 @@ export default function Home() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
 
-  // Auto-detect wallet on mount
+  // Auto-detect wallet on mount (same flow for both networks)
   useEffect(() => {
     getConnectedAddress().then((addr) => {
       if (addr) setWalletAddress(addr);
@@ -111,7 +111,6 @@ export default function Home() {
 
   const handleNetworkChange = useCallback((newNetwork: NetworkType) => {
     setNetwork(newNetwork);
-    // Clear all results when switching networks
     setResult(null);
     setSimulationResult(null);
     setExplanation(null);
@@ -119,10 +118,7 @@ export default function Home() {
     setFixToast(null);
     setError(null);
     setConsensusStatus(null);
-    // Check if wallet is already connected — user may need to re-connect on new chain
-    getConnectedAddress().then((addr) => {
-      setWalletAddress(addr);
-    });
+    getConnectedAddress().then((addr) => setWalletAddress(addr));
     logGL("ACTION → Network changed", { network: newNetwork });
   }, []);
 
