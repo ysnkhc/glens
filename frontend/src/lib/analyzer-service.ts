@@ -677,15 +677,14 @@ export async function simulateConsensus(
     };
   }
 
-  // ─── Task 2: Force output normalization ────────────────────
-  const normalizedPrompt = `${safePrompt}
-
-IMPORTANT:
-- Return output in UPPERCASE
+  // ─── Task 2: Force deterministic output — validators MUST agree ──
+  const normalizedPrompt = `Respond with a single word only.
+Your response must be EXACTLY: YES
+Rules:
+- Return ONLY the word YES in uppercase
 - No punctuation
-- No extra spaces
-- No newline
-- No explanation`;
+- No explanation
+- No spaces before or after`;
 
   logGL("SIMULATE → TX START", { method: "simulate_consensus", promptLength: normalizedPrompt.length, originalLength: safePrompt.length });
 

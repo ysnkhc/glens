@@ -70,6 +70,7 @@ interface ResultsPanelProps {
   consensusStatus?: string | null;
   consensusElapsed?: number;
   onCancelConsensus?: () => void;
+  network?: "studio" | "bradbury";
 }
 
 /* ─── Skeleton Loading Cards ─── */
@@ -130,6 +131,7 @@ export default function ResultsPanel({
   consensusStatus,
   consensusElapsed,
   onCancelConsensus,
+  network = "studio",
 }: ResultsPanelProps) {
   // Build a copy-friendly text summary of results
   const buildResultsSummary = (): string => {
@@ -428,6 +430,7 @@ export default function ResultsPanel({
               isLoading={isSimulating || false}
               onSimulate={onSimulate}
               predictedRisk={result?.risk_level || null}
+              network={network}
             />
             {/* Live consensus status bar during polling */}
             {consensusStatus && isSimulating && onCancelConsensus && (

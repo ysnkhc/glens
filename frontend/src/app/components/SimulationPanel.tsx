@@ -25,6 +25,7 @@ interface SimulationPanelProps {
   isLoading: boolean;
   onSimulate: () => void;
   predictedRisk?: string | null;
+  network?: "studio" | "bradbury";
 }
 
 // ─── Consensus outcome styling ────────────────────────────────
@@ -99,6 +100,7 @@ export default function SimulationPanel({
   isLoading,
   onSimulate,
   predictedRisk,
+  network = "studio",
 }: SimulationPanelProps) {
   const isOnChain = result?.execution?.source === "ONCHAIN_CONFIRMED" ||
                     result?.execution?.source === "ONCHAIN_CONSENSUS_FAILURE";
@@ -272,7 +274,7 @@ export default function SimulationPanel({
             <span className="text-[10px]">⛓️</span>
             <span className="text-[10px] text-slate-500 italic">
               {isOnChain
-                ? "Real consensus result — 5 validators executed this prompt independently and voted."
+                ? `Real consensus result — 5 ${network === "studio" ? "Studio" : "Bradbury"} validators executed this prompt independently and voted.`
                 : "Client-side analysis — connect wallet for real on-chain consensus."}
             </span>
           </div>
@@ -280,7 +282,9 @@ export default function SimulationPanel({
           {/* Trust bar */}
           <div className="pt-1 px-1">
             <TrustBar execution={result.execution} label={
-              isOnChain ? "On-Chain Consensus (Bradbury)" : "Client Analysis"
+              isOnChain
+                ? (network === "studio" ? "On-Chain Consensus (Studio)" : "On-Chain Consensus (Bradbury)")
+                : "Client Analysis"
             } />
           </div>
 

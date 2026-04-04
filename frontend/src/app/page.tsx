@@ -513,6 +513,7 @@ export default function Home() {
                 consensusStatus={consensusStatus}
                 consensusElapsed={consensusElapsed}
                 onCancelConsensus={handleCancelConsensus}
+                network={network}
               />
             </div>
           </div>
