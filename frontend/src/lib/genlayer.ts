@@ -1,42 +1,63 @@
 /**
- * GenLayer Client — Hybrid Wallet + Direct Consensus Polling
+ * GenLayer Client — Dual-Network (Studio + Bradbury)
  *
  * ARCHITECTURE:
- * The GenLayer SDK's writeContract has a broken receipt parsing layer:
- * it calls parseEventLogs to find NewTransaction events, but the
- * GenLayer RPC receipt format doesn't match what viem expects.
- * Result: "Transaction not processed by consensus" even when the
- * EVM tx succeeded and the receipt contains valid logs.
+ * Two networks are supported:
  *
- * SOLUTION: Three-layer bypass:
- *   1. Hybrid provider: Rabby signs, GenLayer RPC handles receipts
- *   2. Store the EVM txHash from eth_sendTransaction
- *   3. Extract GenLayer txId from receipt logs ourselves
- *   4. Poll consensus status directly via gen_getTransactionByHash
+ *   studio   → GenLayer Studio (local, http://localhost:4000)
+ *              Uses a pre-funded local dev account — NO wallet popup needed.
+ *
+ *   bradbury → GenLayer Bradbury testnet
+ *              Hybrid provider: Rabby signs, GenLayer RPC handles receipts.
+ *              Bypasses broken SDK receipt parsing via direct log extraction.
  */
 
 import { createClient } from "genlayer-js";
-import { testnetBradbury } from "genlayer-js/chains";
+import { testnetBradbury, localnet } from "genlayer-js/chains";
+import { privateKeyToAccount } from "viem/accounts";
+
+// ─── Network Type ─────────────────────────────────────────────
+export type NetworkType = "bradbury" | "studio";
 
 /**
- * Contract address — freshly deployed on Bradbury testnet.
- * Deploy TX: 0x5e02a5a128faec3b6db050e30bbc814d1fb986cad225de77d2a6de3826b56019
- * Status: ACCEPTED, Result: AGREE (3/5 validators)
+ * Contract addresses per network.
+ * Studio address will be filled after deployment.
  */
-export const CONTRACT_ADDRESS: string = "0x4aa1046C8751e043bAEe76b4FD0F1D4188aD8C2e";
+export const CONTRACT_ADDRESS: Record<NetworkType, string> = {
+  bradbury: "0x4aa1046C8751e043bAEe76b4FD0F1D4188aD8C2e",
+  studio:   "", // Update after: genlayer deploy (Studio)
+};
 
 /**
- * GenLayer Bradbury RPC endpoint.
+ * RPC endpoints per network.
  */
-const GENLAYER_RPC = "https://rpc-bradbury.genlayer.com";
+const RPC: Record<NetworkType, string> = {
+  bradbury: "https://rpc-bradbury.genlayer.com",
+  studio:   "http://localhost:4000",
+};
 
 /**
- * GenLayer chain config for MetaMask/Rabby.
+ * GenLayer Studio pre-funded dev account.
+ * This is the standard public dev key used in GenLayer local environments.
+ * NEVER use for mainnet — local dev only.
+ */
+const STUDIO_DEV_PRIVATE_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as const;
+export const STUDIO_DEV_ADDRESS = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+
+/**
+ * Return the correct genlayer-js chain config for the given network.
+ */
+export function getChain(network: NetworkType) {
+  return network === "studio" ? localnet : testnetBradbury;
+}
+
+/**
+ * GenLayer Bradbury chain config for MetaMask/Rabby (wallet_addEthereumChain).
  */
 export const CHAIN_CONFIG = {
   chainId: `0x${testnetBradbury.id.toString(16)}`,
   chainName: "GenLayer Testnet Bradbury",
-  rpcUrls: [GENLAYER_RPC],
+  rpcUrls: [RPC.bradbury],
   nativeCurrency: {
     name: "GEN",
     symbol: "GEN",
@@ -57,8 +78,6 @@ function getEthereum(): EIP1193Provider | undefined {
 }
 
 // ─── Stored EVM txHash from last eth_sendTransaction ─────────────
-// The hybrid provider stores this so we can recover the txId
-// even when the SDK's parseEventLogs fails.
 let lastEvmTxHash: string | null = null;
 
 /** Get the last EVM txHash sent through the hybrid provider */
@@ -68,11 +87,18 @@ export function getLastEvmTxHash(): string | null {
 
 /**
  * Request wallet connection via MetaMask/Rabby (EIP-1193).
+ * Only used for Bradbury — Studio uses a local account.
  */
-export async function connectWallet(): Promise<string | null> {
+export async function connectWallet(network: NetworkType = "bradbury"): Promise<string | null> {
+  // Studio: return the local dev account immediately — no popup
+  if (network === "studio") {
+    return STUDIO_DEV_ADDRESS;
+  }
+
+  // Bradbury: full Rabby/MetaMask flow
   const ethereum = getEthereum();
   if (!ethereum) {
-    throw new Error("No wallet found. Please install MetaMask or Rabby to use this dApp.");
+    throw new Error("No wallet found. Please install MetaMask or Rabby to use Bradbury testnet.");
   }
 
   try {
@@ -84,7 +110,7 @@ export async function connectWallet(): Promise<string | null> {
       throw new Error("No accounts found. Please unlock your wallet.");
     }
 
-    // Switch to GenLayer Bradbury network — add it if not present
+    // Switch to GenLayer Bradbury network — add if not present
     try {
       await ethereum.request({
         method: "wallet_switchEthereumChain",
@@ -125,8 +151,14 @@ export async function connectWallet(): Promise<string | null> {
 
 /**
  * Get the currently connected address (without prompting).
+ * For Studio, always returns the dev address.
+ * For Bradbury, checks the injected wallet.
  */
-export async function getConnectedAddress(): Promise<string | null> {
+export async function getConnectedAddress(network: NetworkType = "bradbury"): Promise<string | null> {
+  if (network === "studio") {
+    return STUDIO_DEV_ADDRESS;
+  }
+
   const ethereum = getEthereum();
   if (!ethereum) return null;
 
@@ -143,8 +175,8 @@ export async function getConnectedAddress(): Promise<string | null> {
 // ─── Direct GenLayer RPC helper ──────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function genLayerRPC(method: string, params: unknown[] = []): Promise<any> {
-  const response = await fetch(GENLAYER_RPC, {
+async function genLayerRPC(method: string, params: unknown[] = [], rpcUrl: string = RPC.bradbury): Promise<any> {
+  const response = await fetch(rpcUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -170,15 +202,19 @@ async function genLayerRPC(method: string, params: unknown[] = []): Promise<any>
  * Poll for an EVM receipt from GenLayer RPC.
  * Retries until the receipt is available (tx mined).
  */
-export async function pollForReceipt(evmTxHash: string, timeoutMs = 30000): Promise<Record<string, unknown>> {
+export async function pollForReceipt(
+  evmTxHash: string,
+  timeoutMs = 30000,
+  network: NetworkType = "bradbury",
+): Promise<Record<string, unknown>> {
+  const rpcUrl = RPC[network];
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const receipt = await genLayerRPC("eth_getTransactionReceipt", [evmTxHash]);
+    const receipt = await genLayerRPC("eth_getTransactionReceipt", [evmTxHash], rpcUrl);
     if (receipt) {
       console.log("🧾 EVM RECEIPT:", JSON.stringify(receipt, null, 2));
       return receipt;
     }
-    // Not mined yet — wait 2s
     await new Promise(r => setTimeout(r, 2000));
   }
   throw new Error(`EVM receipt polling timeout after ${timeoutMs}ms`);
@@ -189,19 +225,12 @@ export async function pollForReceipt(evmTxHash: string, timeoutMs = 30000): Prom
  *
  * The TransactionCreated event is emitted by the consensus router at
  * 0x1d301acef55eaf7df5d3741659d426f51061ec8d on Bradbury.
- *
- * Log layout:
- *   topics[0] = event signature (0x8da32500...)
- *   topics[1] = GenLayer txId  ← THIS IS WHAT WE NEED
- *   topics[2] = sender address
- *   topics[3] = contract address
  */
 export function extractGenLayerTxId(receipt: Record<string, unknown>): string | null {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const logs = (receipt as any).logs;
   if (!logs || !Array.isArray(logs)) return null;
 
-  // Find the TransactionCreated event from the consensus router
   const CONSENSUS_ROUTER = "0x1d301acef55eaf7df5d3741659d426f51061ec8d";
 
   const log = logs.find(
@@ -214,7 +243,6 @@ export function extractGenLayerTxId(receipt: Record<string, unknown>): string | 
     return log.topics[1];
   }
 
-  // Fallback: log everything for debugging
   console.warn("⚠️ TransactionCreated event not found from", CONSENSUS_ROUTER);
   for (let i = 0; i < logs.length; i++) {
     console.warn(`  LOG[${i}] address=${logs[i].address} topics=${JSON.stringify(logs[i].topics)}`);
@@ -225,8 +253,6 @@ export function extractGenLayerTxId(receipt: Record<string, unknown>): string | 
 /**
  * Poll GenLayer consensus status directly via RPC.
  * Bypasses the SDK's broken waitForTransactionReceipt.
- *
- * Real consensus takes 30-120 seconds (5 validators + up to 3 rotation rounds).
  */
 export interface ConsensusResult {
   consensus: "AGREED" | "DISAGREED" | "TIMEOUT" | "ERROR" | "CANCELLED";
@@ -254,7 +280,6 @@ export async function pollConsensusStatus(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    // Check if cancelled
     if (signal?.aborted) {
       return {
         consensus: "CANCELLED",
@@ -276,6 +301,18 @@ export async function pollConsensusStatus(
 
       const statusName = tx.statusName || "";
       const resultName = tx.resultName || "";
+
+      if (!lastStatus) {
+        console.group("📍 TX OBJECT AUDIT (first poll)");
+        console.log("statusName:", tx.statusName);
+        console.log("resultName:", tx.resultName);
+        console.log("queueType:", tx.queueType, "| queueTypeName:", tx.queueTypeName);
+        console.log("queuePosition:", tx.queuePosition);
+        console.log("numOfInitialValidators:", tx.numOfInitialValidators);
+        console.log("activator:", tx.activator);
+        console.log("All TX keys:", Object.keys(tx));
+        console.groupEnd();
+      }
 
       if (statusName !== lastStatus) {
         lastStatus = statusName;
@@ -316,17 +353,14 @@ export async function pollConsensusStatus(
   }
 }
 
-
-
+// ─── Hybrid EIP-1193 provider (Bradbury only) ────────────────────
 
 /**
  * Hybrid EIP-1193 provider:
  *   eth_sendTransaction → Rabby wallet (popup + signing)
- *   Everything else     → GenLayer RPC directly
- *
- * Also stores the last EVM txHash for recovery when SDK throws.
+ *   Everything else     → GenLayer Bradbury RPC directly
  */
-function createHybridProvider(): EIP1193Provider {
+function createHybridProvider(rpcUrl: string): EIP1193Provider {
   let jsonRpcId = 1;
 
   return {
@@ -336,14 +370,38 @@ function createHybridProvider(): EIP1193Provider {
         const ethereum = getEthereum();
         if (!ethereum) throw new Error("Wallet not available for signing");
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const txData = (params as any)?.[0]?.data as string | undefined;
+        if (txData && txData.length > 10) {
+          try {
+            const abiData = txData.slice(10);
+            const wordCount = Math.floor(abiData.length / 64);
+            console.group("📍 CALLDATA AUDIT");
+            console.log("Total calldata length:", txData.length, "chars (", (txData.length - 10) / 2, "bytes of ABI data)");
+            console.log("ABI word count:", wordCount);
+            for (let i = Math.max(0, wordCount - 4); i < wordCount; i++) {
+              const word = abiData.slice(i * 64, (i + 1) * 64);
+              const asNum = BigInt("0x" + word);
+              const label = i === wordCount - 1 ? "➡️ LAST WORD (likely validUntil)" : `word[${i}]`;
+              console.log(label + ":", word, "=", asNum.toString(),
+                asNum > 1000000000n && asNum < 9999999999n
+                  ? ("= date: " + new Date(Number(asNum) * 1000).toISOString())
+                  : ""
+              );
+            }
+            console.groupEnd();
+          } catch(e) {
+            console.warn("Calldata audit failed:", e);
+          }
+        }
+
         const txHash = await ethereum.request({ method, params });
         lastEvmTxHash = txHash as string;
         return txHash;
       }
 
       // ─── EVERYTHING ELSE: Route to GenLayer RPC directly ───
-
-      const response = await fetch(GENLAYER_RPC, {
+      const response = await fetch(rpcUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -364,8 +422,6 @@ function createHybridProvider(): EIP1193Provider {
         throw new Error(data.error.message || JSON.stringify(data.error));
       }
 
-
-
       return data.result;
     },
   };
@@ -374,18 +430,27 @@ function createHybridProvider(): EIP1193Provider {
 /**
  * Create a GenLayer client for on-chain transactions.
  *
- * Uses a HYBRID provider:
- *   - Rabby signs transactions (popup + approval)
- *   - GenLayer RPC handles receipts, events, nonce queries
+ * Studio:   pre-funded local account — no wallet popup.
+ * Bradbury: hybrid Rabby provider — popup + signing.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createWalletClient(address: string): any {
-  const hybridProvider = createHybridProvider();
+export function createWalletClient(address: string, network: NetworkType = "bradbury"): any {
+  const chain = getChain(network);
+  const rpcUrl = RPC[network];
 
+  if (network === "studio") {
+    // Studio: use the pre-funded local account directly
+    const account = privateKeyToAccount(STUDIO_DEV_PRIVATE_KEY);
+    return createClient({
+      chain,
+      account,
+    });
+  }
 
-
+  // Bradbury: hybrid Rabby provider (unchanged)
+  const hybridProvider = createHybridProvider(rpcUrl);
   return createClient({
-    chain: testnetBradbury,
+    chain,
     account: address as `0x${string}`,
     provider: hybridProvider,
   });

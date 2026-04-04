@@ -11,7 +11,8 @@
  * - NEVER use requests.get → must use gl.nondet.web
  */
 
-import { CONTRACT_ADDRESS, createWalletClient, getLastEvmTxHash, pollForReceipt, extractGenLayerTxId, pollConsensusStatus } from "./genlayer";
+import { CONTRACT_ADDRESS, createWalletClient, getLastEvmTxHash, pollForReceipt, extractGenLayerTxId, pollConsensusStatus, STUDIO_DEV_ADDRESS } from "./genlayer";
+import type { NetworkType } from "./genlayer";
 import { parseContract, buildMetadata } from "./parser";
 import { runRules } from "./rules-engine";
 import { scoreRisk } from "./risk-scorer";
@@ -188,14 +189,14 @@ function safeParseJSON(text: string): any {
   }
 }
 
-function isContractReady(walletAddress?: string | null): boolean {
-  return (
-    !!walletAddress &&
-    !!CONTRACT_ADDRESS &&
-    CONTRACT_ADDRESS.startsWith("0x") &&
-    CONTRACT_ADDRESS.length > 40 &&
-    CONTRACT_ADDRESS !== "YOUR_CONTRACT_ADDRESS"
-  );
+function isContractReady(walletAddress?: string | null, network: NetworkType = "studio"): boolean {
+  const addr = CONTRACT_ADDRESS[network];
+  if (!addr || addr === "" || !addr.startsWith("0x") || addr.length <= 40 || addr === "YOUR_CONTRACT_ADDRESS") {
+    return false;
+  }
+  // Studio uses a pre-funded local account — no external wallet required
+  if (network === "studio") return true;
+  return !!walletAddress;
 }
 
 // ─── Prompt Utilities (shared module) ──────────────────────────
@@ -411,7 +412,7 @@ function ruleBasedFix(code: string): FixResult {
 /**
  * Analyze a GenLayer contract.
  */
-export async function analyzeContract(code: string, walletAddress?: string | null): Promise<AnalysisResult> {
+export async function analyzeContract(code: string, walletAddress?: string | null, network: NetworkType = "studio"): Promise<AnalysisResult> {
   logGL("ANALYZE → CLIENT START", { codeLength: code.length, walletAddress: walletAddress?.slice(0, 10) + "..." });
   const parsed = parseContract(code);
   const report = runRules(parsed, code);
@@ -422,9 +423,9 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
   let aiAnalysis: AIAnalysis;
   let execution: ExecutionMeta;
 
-  if (isContractReady(walletAddress)) {
+  if (isContractReady(walletAddress, network)) {
     try {
-      const client = createWalletClient(walletAddress!);
+      const client = createWalletClient(walletAddress || STUDIO_DEV_ADDRESS, network);
       const summary = buildMetadata(parsed);
       const safeSummary = summary.slice(0, 200);
 
@@ -436,7 +437,7 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
 
       const txHash = await sendSerialTransaction(() =>
         client.writeContract({
-          address: CONTRACT_ADDRESS as `0x${string}`,
+          address: CONTRACT_ADDRESS[network] as `0x${string}`,
           functionName: "analyze_contract",
           args: [safeSummary],
           value: 0n,
@@ -459,7 +460,7 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
 
       const readFn = getReadMethod("analyze_contract");
       const resultStr = await client.readContract({
-        address: CONTRACT_ADDRESS as `0x${string}`,
+        address: CONTRACT_ADDRESS[network] as `0x${string}`,
         functionName: readFn,
         args: [],
       });
@@ -509,14 +510,14 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
 /**
  * Explain a contract.
  */
-export async function explainContract(code: string, walletAddress?: string | null): Promise<ExplainResult> {
-  if (!isContractReady(walletAddress)) {
+export async function explainContract(code: string, walletAddress?: string | null, network: NetworkType = "studio"): Promise<ExplainResult> {
+  if (!isContractReady(walletAddress, network)) {
     logGL("EXPLAIN → CLIENT-ONLY (no wallet/contract)", { walletAddress });
     return { text: generateExplanation(code), execution: computeTrust("CLIENT_FALLBACK") };
   }
 
   try {
-    const client = createWalletClient(walletAddress!);
+    const client = createWalletClient(walletAddress || STUDIO_DEV_ADDRESS, network);
     const parsed = parseContract(code);
     const summary = buildMetadata(parsed);
     const safeSummary = summary.slice(0, 200);
@@ -529,13 +530,13 @@ export async function explainContract(code: string, walletAddress?: string | nul
     console.log("CALLING writeContract:", {
       functionName: "explain_contract",
       args: [safeSummary],
-      contractAddress: CONTRACT_ADDRESS,
+      contractAddress: CONTRACT_ADDRESS[network],
       note: "SDK routes this through GenLayer Router (0x0112Bf6e...), NOT directly to contract"
     });
 
     const txHash = await sendSerialTransaction(() =>
       client.writeContract({
-        address: CONTRACT_ADDRESS as `0x${string}`,
+        address: CONTRACT_ADDRESS[network] as `0x${string}`,
         functionName: "explain_contract",
         args: [safeSummary],
         value: 0n,
@@ -558,7 +559,7 @@ export async function explainContract(code: string, walletAddress?: string | nul
 
     const readFn = getReadMethod("explain_contract");
     const result = await client.readContract({
-      address: CONTRACT_ADDRESS as `0x${string}`,
+      address: CONTRACT_ADDRESS[network] as `0x${string}`,
       functionName: readFn,
       args: [],
     });
@@ -595,6 +596,7 @@ export async function simulateConsensus(
   walletAddress?: string | null,
   onStatusChange?: (status: string, elapsed: number) => void,
   signal?: AbortSignal,
+  network: NetworkType = "studio",
 ): Promise<SimulationResult> {
   logGL("SIMULATE → START", { codeLength: code.length });
   const parsed = parseContract(code);
@@ -635,8 +637,8 @@ export async function simulateConsensus(
     };
   }
 
-  if (!isContractReady(walletAddress)) {
-    logGL("SIMULATE → BLOCKED (no wallet/contract)", { walletAddress });
+  if (!isContractReady(walletAddress, network)) {
+    logGL("SIMULATE → BLOCKED (no wallet/contract)", { walletAddress, network });
     return {
       validators: [],
       consensus: "N/A",
@@ -644,14 +646,16 @@ export async function simulateConsensus(
       agreement_rate: 0,
       risk: "HIGH",
       prompts_found: prompts.length,
-      message: "🔒 Consensus test requires on-chain execution — connect your wallet.",
+      message: network === "studio"
+        ? "🔒 Studio contract not deployed yet — deploy to GenLayer Studio first."
+        : "🔒 Consensus test requires on-chain execution — connect your wallet.",
       execution: computeTrust("CLIENT_DETERMINISTIC"),
       failureType: null,
     };
   }
 
   // ─── Single-TX Real Consensus ──────────────────────────────
-  const client = createWalletClient(walletAddress!);
+  const client = createWalletClient(walletAddress || STUDIO_DEV_ADDRESS, network);
   const safePrompt = prompts[0].slice(0, 200);
   const timer = createTxTimer("simulate_consensus");
   const startTime = Date.now();
@@ -704,7 +708,7 @@ IMPORTANT:
 
       txHash = await sendSerialTransaction(() =>
         client.writeContract({
-          address: CONTRACT_ADDRESS as `0x${string}`,
+          address: CONTRACT_ADDRESS[network] as `0x${string}`,
           functionName: "simulate_consensus",
           args: [normalizedPrompt],
           value: 0n,
@@ -770,7 +774,7 @@ IMPORTANT:
       try {
         const readFn = getReadMethod("simulate_consensus");
         const resultStr = await client.readContract({
-          address: CONTRACT_ADDRESS as `0x${string}`,
+          address: CONTRACT_ADDRESS[network] as `0x${string}`,
           functionName: readFn,
           args: [],
         });
@@ -1078,7 +1082,7 @@ function classifyConsensusFailure(errMsg: string): {
 /**
  * Fix a contract — Phase 3+4+5: conditional fix + re-analyze + improvement score.
  */
-export async function fixContract(code: string, walletAddress?: string | null): Promise<FixResult> {
+export async function fixContract(code: string, walletAddress?: string | null, network: NetworkType = "studio"): Promise<FixResult> {
   logGL("FIX → CLIENT START", { codeLength: code.length });
   const parsed = parseContract(code);
   const report = runRules(parsed, code);
@@ -1108,9 +1112,9 @@ export async function fixContract(code: string, walletAddress?: string | null): 
   logGL("FIX → CLIENT RULE RESULT", { changes: ruleFix.changes_made.length, beforeRisk: ruleFix.before_risk, afterRisk: ruleFix.after_risk, validAfterFix: ruleFix.validAfterFix });
 
   // Optionally enhance with on-chain AI suggestions
-  if (isContractReady(walletAddress)) {
+  if (isContractReady(walletAddress, network)) {
     try {
-      const client = createWalletClient(walletAddress!);
+      const client = createWalletClient(walletAddress || STUDIO_DEV_ADDRESS, network);
       const safeIssues = allIssues.map((i) => `- ${i}`).join("\n").slice(0, 200);
 
       const timer = createTxTimer("fix_contract");
@@ -1121,13 +1125,13 @@ export async function fixContract(code: string, walletAddress?: string | null): 
       console.log("CALLING writeContract:", {
         functionName: "fix_contract",
         args: [safeIssues],
-        contractAddress: CONTRACT_ADDRESS,
+        contractAddress: CONTRACT_ADDRESS[network],
         note: "SDK routes this through GenLayer Router (0x0112Bf6e...), NOT directly to contract"
       });
 
       const txHash = await sendSerialTransaction(() =>
         client.writeContract({
-          address: CONTRACT_ADDRESS as `0x${string}`,
+          address: CONTRACT_ADDRESS[network] as `0x${string}`,
           functionName: "fix_contract",
           args: [safeIssues],
           value: 0n,
@@ -1150,7 +1154,7 @@ export async function fixContract(code: string, walletAddress?: string | null): 
 
       const readFn = getReadMethod("fix_contract");
       const resultStr = await client.readContract({
-        address: CONTRACT_ADDRESS as `0x${string}`,
+        address: CONTRACT_ADDRESS[network] as `0x${string}`,
         functionName: readFn,
         args: [],
       });

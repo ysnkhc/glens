@@ -11,7 +11,9 @@ import { SAMPLE_CONTRACTS } from "./components/SampleContracts";
 import {
   connectWallet,
   getConnectedAddress,
+  STUDIO_DEV_ADDRESS,
 } from "@/lib/genlayer";
+import type { NetworkType } from "@/lib/genlayer";
 import {
   analyzeContract,
   explainContract,
@@ -69,16 +71,24 @@ export default function Home() {
     }
   }, [code]);
 
+  // Network selection — default to Studio (reliable local env)
+  const [network, setNetwork] = useState<NetworkType>("studio");
+
   // Wallet state
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
 
-  // Auto-detect wallet on mount
+  // Auto-provision on mount: Studio uses local account, Bradbury checks wallet
   useEffect(() => {
-    getConnectedAddress().then((addr) => {
-      if (addr) setWalletAddress(addr);
-    });
+    if (network === "studio") {
+      setWalletAddress(STUDIO_DEV_ADDRESS);
+    } else {
+      getConnectedAddress("bradbury").then((addr) => {
+        if (addr) setWalletAddress(addr);
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Listen for account changes
@@ -102,13 +112,37 @@ export default function Home() {
     };
   }, []);
 
+  // ─── Network Switch ──────────────────────────────────────────
+
+  const handleNetworkChange = useCallback((newNetwork: NetworkType) => {
+    setNetwork(newNetwork);
+    // Clear all results when switching networks
+    setResult(null);
+    setSimulationResult(null);
+    setExplanation(null);
+    setFixResult(null);
+    setFixToast(null);
+    setError(null);
+    setConsensusStatus(null);
+    // Auto-provision wallet for the new network
+    if (newNetwork === "studio") {
+      setWalletAddress(STUDIO_DEV_ADDRESS);
+    } else {
+      // Check if Rabby is already connected
+      getConnectedAddress("bradbury").then((addr) => {
+        setWalletAddress(addr); // may be null — user will click Connect
+      });
+    }
+    logGL("ACTION → Network changed", { network: newNetwork });
+  }, []);
+
   // ─── Connect Wallet ──────────────────────────────────────────
 
   const handleConnect = useCallback(async () => {
     setIsConnecting(true);
     setWalletError(null);
     try {
-      const address = await connectWallet();
+      const address = await connectWallet(network);
       if (address) setWalletAddress(address);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Connection failed";
@@ -117,7 +151,7 @@ export default function Home() {
     } finally {
       setIsConnecting(false);
     }
-  }, []);
+  }, [network]);
 
   // ─── Disconnect Wallet ───────────────────────────────────────
 
@@ -161,7 +195,7 @@ export default function Home() {
     setActivePanel("results");
 
     try {
-      const data = await analyzeContract(code, walletAddress);
+      const data = await analyzeContract(code, walletAddress, network);
       setResult(data);
       logGL("ACTION ✅ Analyze complete", { riskLevel: data.risk_level, issues: data.issues.length });
     } catch (err: unknown) {
@@ -184,7 +218,7 @@ export default function Home() {
     logGL("ACTION → Explain", { codeLength: code.length });
     setIsExplaining(true);
     try {
-      const result = await explainContract(code, walletAddress);
+      const result = await explainContract(code, walletAddress, network);
       setExplanation(result.text);
       logGL("ACTION ✅ Explain complete", { resultLength: result.text.length, source: result.execution.source });
     } catch {
@@ -222,6 +256,7 @@ export default function Home() {
           setConsensusElapsed(elapsed);
         },
         controller.signal,
+        network,
       );
 
       if (data.consensus === "CANCELLED") {
@@ -298,7 +333,7 @@ export default function Home() {
     setFixToast(null);
     setFixResult(null);
     try {
-      const data = await fixContract(code, walletAddress);
+      const data = await fixContract(code, walletAddress, network);
       setCode(data.fixed_code);
       setFixResult(data);
       const localChanges = data.changes_made.filter((c) => !c.startsWith("🤖 AI:") && !c.startsWith("✅ Contract is already"));
@@ -330,7 +365,7 @@ export default function Home() {
       setIsLoading(true);
       setActivePanel("results");
       try {
-        const newResult = await analyzeContract(data.fixed_code, walletAddress);
+        const newResult = await analyzeContract(data.fixed_code, walletAddress, network);
         setResult(newResult);
         logGL("ACTION ✅ Fix: auto re-analyze complete", { riskLevel: newResult.risk_level });
       } catch {
@@ -369,6 +404,8 @@ export default function Home() {
         isConnecting={isConnecting}
         onConnect={handleConnect}
         onDisconnect={handleDisconnect}
+        network={network}
+        onNetworkChange={handleNetworkChange}
       />
 
       {/* Wallet Error Toast */}
@@ -403,12 +440,27 @@ export default function Home() {
         <div className="max-w-[1600px] mx-auto h-full p-4 md:p-6 flex flex-col">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-5 shrink-0">
             <SampleContracts onSelect={handleSampleSelect} />
+
+            {/* Bradbury warning banner */}
+            {network === "bradbury" && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] text-amber-400/90 bg-amber-500/8 border border-amber-500/15">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+                Bradbury testnet validators may be slow or unavailable. Use Studio for reliable results.
+              </div>
+            )}
+
             <button
               id="analyze-button"
               onClick={handleAnalyze}
               disabled={isBusy || !code.trim() || !walletAddress}
               title={!walletAddress ? "Connect wallet to analyze" : isBusy ? "Another action is in progress" : ""}
-              className={`btn-primary flex items-center gap-2.5 text-sm whitespace-nowrap ${isLoading ? "animate-pulse-glow" : ""} ${!walletAddress || isBusy ? "opacity-50 cursor-not-allowed" : ""}`}
+              className={`btn-primary flex items-center gap-2.5 text-sm whitespace-nowrap ${
+                isLoading ? "animate-pulse-glow" : ""
+              } ${!walletAddress || isBusy ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {isLoading ? (
                 <>

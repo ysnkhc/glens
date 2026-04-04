@@ -1,15 +1,19 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import NetworkSelector from "./NetworkSelector";
+import type { NetworkType } from "@/lib/genlayer";
 
 interface HeaderProps {
   walletAddress: string | null;
   isConnecting: boolean;
   onConnect: () => void;
   onDisconnect: () => void;
+  network: NetworkType;
+  onNetworkChange: (n: NetworkType) => void;
 }
 
-export default function Header({ walletAddress, isConnecting, onConnect, onDisconnect }: HeaderProps) {
+export default function Header({ walletAddress, isConnecting, onConnect, onDisconnect, network, onNetworkChange }: HeaderProps) {
   const [scrolled, setScrolled] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -71,14 +75,31 @@ export default function Header({ walletAddress, isConnecting, onConnect, onDisco
           </div>
         </div>
 
-        {/* Right side: badges + wallet */}
+        {/* Right side: network selector + badges + wallet */}
         <div className="flex items-center gap-3">
 
-          {/* Depends Hash Badge */}
-          <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[10px] font-mono text-slate-600 bg-slate-800/20 border border-slate-800/30" title="Bradbury Depends hash">
-            <span className="text-slate-500">📦</span>
-            <span>1jb45a...09h6</span>
-          </div>
+          {/* Network Selector */}
+          <NetworkSelector network={network} onNetworkChange={onNetworkChange} />
+
+          {/* Bradbury warning pill */}
+          {network === "bradbury" && (
+            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[10px] font-medium bg-amber-500/10 border border-amber-500/20 text-amber-400">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+              Validators may be slow
+            </div>
+          )}
+
+          {/* Depends Hash Badge — Bradbury only */}
+          {network === "bradbury" && (
+            <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[10px] font-mono text-slate-600 bg-slate-800/20 border border-slate-800/30" title="Bradbury Depends hash">
+              <span className="text-slate-500">📦</span>
+              <span>1jb45a...09h6</span>
+            </div>
+          )}
 
           {/* Powered by Bradbury — visible when wallet connected */}
           {walletAddress ? (
@@ -202,6 +223,13 @@ export default function Header({ walletAddress, isConnecting, onConnect, onDisco
                 <>
                   <div className="w-3.5 h-3.5 border-2 border-blue-400/40 border-t-blue-400 rounded-full animate-spin" />
                   Connecting...
+                </>
+              ) : network === "studio" ? (
+                <>
+                  <span className="relative flex h-2 w-2">
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                  </span>
+                  Local Account
                 </>
               ) : (
                 <>
