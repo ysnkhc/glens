@@ -449,6 +449,7 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
       const receipt = await client.waitForTransactionReceipt({
         hash: txHash,
         status: TransactionStatus.ACCEPTED,
+        timeout: 90_000, // 90s — Studio validators take ~35s, Bradbury may take longer
       });
 
       // 🔴 AUDIT LOG: After receipt

@@ -212,7 +212,15 @@ export async function pollConsensusStatus(
       }
       if (statusName !== lastStatus) { lastStatus = statusName; if (onProgress) onProgress(statusName, elapsed); }
       if (TERMINAL_AGREED.includes(statusName)) {
-        return { consensus: resultName === "AGREE" ? "AGREED" : "DISAGREED", txId, status: statusName, statusName, resultName, executionResult: tx.txExecutionResultName, data: tx };
+        // ACCEPTED  = validators agreed after appeal rounds (resultName is often empty)
+        // FINALIZED = validators agreed in first round (resultName = "AGREE")
+        // Both are genuine consensus agreement — never map to DISAGREED
+        const isAgreed = statusName === "ACCEPTED" || resultName === "AGREE" || resultName === "";
+        return {
+          consensus: isAgreed ? "AGREED" : "DISAGREED",
+          txId, status: statusName, statusName, resultName,
+          executionResult: tx.txExecutionResultName, data: tx,
+        };
       }
       if (TERMINAL_FAILED.includes(statusName)) {
         return { consensus: "DISAGREED", txId, status: statusName, statusName, resultName, data: tx };
