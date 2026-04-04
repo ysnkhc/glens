@@ -1,0 +1,112 @@
+var contractActions = (client, publicClient) => {
+  return {
+    /** Retrieves the source code of a deployed contract. Localnet only. */
+    getContractCode: async (address) => {
+      if (client.chain.id !== localnet.id) {
+        throw new Error("Getting contract code is not supported on this network");
+      }
+      const result = await client.request({
+        method: "gen_getContractCode",
+        params: [address]
+      });
+      const codeBytes = b64ToArray(result);
+      return new TextDecoder().decode(codeBytes);
+    },
+    /** Gets the schema (methods and constructor) of a deployed contract. Localnet only. */
+    getContractSchema: async (address) => {
+      if (client.chain.id !== localnet.id) {
+        throw new Error("Contract schema is not supported on this network");
+      }
+      const schema = await client.request({
+        method: "gen_getContractSchema",
+        params: [address]
+      });
+      return schema;
+    },
+    /** Generates a schema for contract code without deploying it. Localnet only. */
+    getContractSchemaForCode: async (contractCode) => {
+      if (client.chain.id !== localnet.id) {
+        throw new Error("Contract schema is not supported on this network");
+      }
+      const schema = await client.request({
+        method: "gen_getContractSchemaForCode",
+        params: [toHex3(contractCode)]
+      });
+      return schema;
+    },
+    /** Executes a read-only contract call without modifying state. */
+    readContract: async (args) => {
+      const {
+        account,
+        address,
+        functionName,
+        args: callArgs,
+        kwargs,
+        jsonSafeReturn = true,
+        leaderOnly = false,
+        transactionHashVariant = "latest-nonfinal" /* LATEST_NONFINAL */
+      } = args;
+      const encodedData = [encode(makeCalldataObject(functionName, callArgs, kwargs)), leaderOnly];
+      const serializedData = serialize(encodedData);
+      const senderAddress = account?.address ?? client.account?.address ?? zeroAddress;
+      const requestParams = {
+        type: "read",
+        to: address,
+        from: senderAddress,
+        data: serializedData,
+        transaction_hash_variant: transactionHashVariant
+      };
+      const result = await client.request({
+        method: "gen_call",
+        params: [requestParams]
+      });
+      const prefixedResult = extractGenCallResult(result);
+      if (args.rawReturn) {
+        return prefixedResult;
+      }
+      const resultBinary = fromHex(prefixedResult, "bytes");
+      const decoded = decode(resultBinary);
+      if (!jsonSafeReturn) {
+        return decoded;
+      }
+      return toJsonSafeDeep(decoded);
+    },
+    /** Simulates a state-modifying contract call without executing on-chain. */
+    simulateWriteContract: async (args) => {
+      const {
+        account,
+        address,
+        functionName,
+        args: callArgs,
+        kwargs,
+        leaderOnly = false,
+        transactionHashVariant = "latest-nonfinal" /* LATEST_NONFINAL */
+      } = args;
+      const encodedData = [encode(makeCalldataObject(functionName, callArgs, kwargs)), leaderOnly];
+      const serializedData = serialize(encodedData);
+      const senderAddress = account?.address ?? client.account?.address ?? zeroAddress;
+      const requestParams = {
+        type: "write",
+        to: address,
+        from: senderAddress,
+        data: serializedData,
+        transaction_hash_variant: transactionHashVariant
+      };
+      const result = await client.request({
+        method: "gen_call",
+        params: [requestParams]
+      });
+      const prefixedResult = extractGenCallResult(result);
+      if (args.rawReturn) {
+        return prefixedResult;
+      }
+      const resultBinary = fromHex(prefixedResult, "bytes");
+      return decode(resultBinary);
+    },
+    /** Executes a state-modifying function on a contract through consensus. Returns the transaction hash. */
+    writeContract: async (args) => {
+      const {
+        account,
+        address,
+        functionName,
+  

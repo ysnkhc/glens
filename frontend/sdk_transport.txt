@@ -1,0 +1,59 @@
+getCustomTransportConfig = (config, chainConfig) => {
+  const isAddress = typeof config.account !== "object";
+  return {
+    async request({ method, params = [] }) {
+      if (method.startsWith("eth_") && isAddress) {
+        const provider = config.provider || (typeof window !== "undefined" ? window.ethereum : void 0);
+        if (provider) {
+          try {
+            return await provider.request({ method, params });
+          } catch (err) {
+            console.warn(`Error using provider for method ${method}:`, err);
+            throw err;
+          }
+        }
+      }
+      {
+        try {
+          const response = await fetch(chainConfig.rpcUrls.default.http[0], {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: Date.now(),
+              method,
+              params
+            })
+          });
+          const data = await response.json();
+          if (data.error) {
+            throw data.error;
+          }
+          return data.result;
+        } catch (err) {
+          console.error(`Error fetching ${method} from GenLayer RPC`);
+          throw err;
+        }
+      }
+    }
+  };
+};
+var createClient = (config = { chain: localnet }) => {
+  const chainConfig = config.chain || localnet;
+  if (config.endpoint) {
+    chainConfig.rpcUrls.default.http = [config.endpoint];
+  }
+  const customTransport = custom(getCustomTransportConfig(config, chainConfig), { retryCount: 0, retryDelay: 0 });
+  const publicClient = createPublicClient(chainConfig, customTransport).extend(
+    publicActions
+  );
+  const baseClient = createViemClient({
+    chain: chainConfig,
+    transport: customTransport,
+    ...config.account ? { account: config.account } : {}
+  });
+  const clientWithBasicActions = baseClient.extend(publicActions).extend(walletActions2).extend((client) => accountActions(client));
+  const clientWithTransactionActions = {
+  

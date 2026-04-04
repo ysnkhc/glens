@@ -1,0 +1,78 @@
+ "0x0",
+      // legacy tx
+      chainId: `0x${client.chain.id.toString(16)}`,
+      ...gasPriceHex ? { gasPrice: gasPriceHex } : {}
+    };
+    const evmTxHash = await client.request({
+      method: "eth_sendTransaction",
+      params: [formattedRequest]
+    });
+    const externalReceipt = await publicClient.waitForTransactionReceipt({ hash: evmTxHash });
+    if (externalReceipt.status === "reverted") {
+      throw new Error("Transaction reverted");
+    }
+    const externalNewTxEvents = parseEventLogs({
+      abi: client.chain.consensusMainContract?.abi,
+      eventName: "NewTransaction",
+      logs: externalReceipt.logs
+    });
+    if (externalNewTxEvents.length === 0) {
+      throw new Error("Transaction not processed by consensus");
+    }
+    return externalNewTxEvents[0].args["txId"];
+  };
+  try {
+    return await sendWithEncodedData(encodedData);
+  } catch (error) {
+    if (!fallbackEncodedData || !isAddTransactionAbiMismatchError(error)) {
+      throw error;
+    }
+    return await sendWithEncodedData(fallbackEncodedData);
+  }
+};
+
+// src/config/transactions.ts
+var transactionsConfig = {
+  waitInterval: 3e3,
+  retries: 10
+};
+
+// src/utils/async.ts
+async function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// src/transactions/actions.ts
+import { keccak256, concat, stringToBytes, toBytes } from "viem";
+
+// src/transactions/decoders.ts
+import { fromRlp, fromHex as fromHex2 } from "viem";
+var FIELDS_TO_REMOVE = [
+  "raw",
+  "contract_state",
+  "base64",
+  "consensus_history",
+  "tx_data",
+  "eq_blocks_outputs",
+  "r",
+  "s",
+  "v",
+  "created_timestamp",
+  "current_timestamp",
+  "tx_execution_hash",
+  "random_seed",
+  "states",
+  "contract_code",
+  "appeal_failed",
+  "appeal_leader_timeout",
+  "appeal_processing_time",
+  "appeal_undetermined",
+  "appealed",
+  "timestamp_appeal",
+  "config_rotation_rounds",
+  "rotation_count",
+  "queue_position",
+  "queue_type",
+  "leader_timeout_validators",
+  "triggered_by",
+  "num_of_initial_validato
