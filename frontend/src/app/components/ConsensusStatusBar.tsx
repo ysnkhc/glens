@@ -21,6 +21,19 @@ const STATUS_LABEL: Record<string, string> = {
   CANCELED:      "Transaction cancelled",
 };
 
+const STATUS_COLOR: Record<string, string> = {
+  WAITING:       "var(--color-primary)",
+  PENDING:       "var(--color-primary)",
+  PROPOSING:     "var(--color-secondary)",
+  COMMITTING:    "var(--color-secondary)",
+  REVEALING:     "#fbbf24",
+  FINALIZED:     "#4ade80",
+  ACCEPTED:      "#4ade80",
+  UNDETERMINED:  "#f97316",
+  LEADER_TIMEOUT:"#f97316",
+  CANCELED:      "var(--text-muted)",
+};
+
 const TERMINAL = ["FINALIZED", "ACCEPTED", "UNDETERMINED", "LEADER_TIMEOUT", "CANCELED"];
 
 export default function ConsensusStatusBar({ status, elapsed, onCancel }: ConsensusStatusBarProps) {
@@ -29,30 +42,68 @@ export default function ConsensusStatusBar({ status, elapsed, onCancel }: Consen
   const isTerminal = TERMINAL.includes(status);
   const isSuccess = status === "FINALIZED" || status === "ACCEPTED";
   const isFailed = status === "UNDETERMINED" || status === "LEADER_TIMEOUT";
+  const statusColor = STATUS_COLOR[status] || "var(--color-primary)";
 
   return (
-    <div className="rounded-xl border border-slate-700/40 bg-slate-800/30 px-4 py-3 flex items-center gap-4 animate-fade-in-up">
+    <div
+      className="rounded-lg px-4 py-3 flex items-center gap-4 animate-fade-in-up"
+      style={{
+        background: "var(--bg-depth-2)",
+        border: "1px solid var(--border-subtle)",
+      }}
+    >
       {/* Animated indicator */}
       <div className="shrink-0">
         {isSuccess ? (
-          <div className="w-8 h-8 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-sm">✅</div>
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{ background: "rgba(74, 222, 128, 0.08)", border: "1px solid rgba(74, 222, 128, 0.15)" }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </div>
         ) : isFailed ? (
-          <div className="w-8 h-8 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center text-sm">🚨</div>
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{ background: "rgba(249, 115, 22, 0.08)", border: "1px solid rgba(249, 115, 22, 0.15)" }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </div>
         ) : (
           <div className="relative w-8 h-8">
-            <div className="absolute inset-0 rounded-full border-2 border-slate-700" />
-            <div className="absolute inset-0 rounded-full border-2 border-t-violet-500 border-r-transparent border-b-transparent border-l-transparent animate-spin" />
+            {/* Track ring */}
+            <svg width="32" height="32" className="absolute inset-0">
+              <circle cx="16" cy="16" r="13" fill="none" stroke="var(--border-subtle)" strokeWidth="2" />
+            </svg>
+            {/* Spinner ring */}
+            <svg width="32" height="32" className="absolute inset-0" style={{ animation: "ringSpinner 1.2s linear infinite" }}>
+              <circle
+                cx="16" cy="16" r="13"
+                fill="none"
+                stroke={statusColor}
+                strokeWidth="2"
+                strokeDasharray="82"
+                strokeDashoffset="60"
+                strokeLinecap="round"
+                style={{ filter: `drop-shadow(0 0 3px ${statusColor})` }}
+              />
+            </svg>
           </div>
         )}
       </div>
 
       {/* Label + timer */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-slate-200 truncate">{label}</p>
-        <p className="text-[11px] text-slate-500 mt-0.5">
-          {seconds}s elapsed
+        <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)" }}>{label}</p>
+        <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+          <span className="font-mono" style={{ color: "var(--text-secondary)" }}>{seconds}s</span>
+          <span> elapsed</span>
           {!isTerminal && seconds > 10 && (
-            <span className="ml-1.5 text-slate-600">· Studio validators usually finish in ~35s</span>
+            <span style={{ color: "var(--text-faint)" }}> · Studio validators usually finish in ~35s</span>
           )}
         </p>
       </div>
@@ -61,9 +112,24 @@ export default function ConsensusStatusBar({ status, elapsed, onCancel }: Consen
       {!isTerminal && (
         <button
           onClick={onCancel}
-          className="shrink-0 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-red-400 bg-slate-800/60 hover:bg-red-500/10 border border-slate-700/50 hover:border-red-500/30 rounded-lg transition-all duration-200"
+          className="shrink-0 px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-150"
+          style={{
+            background: "var(--bg-depth-3)",
+            border: "1px solid var(--border-subtle)",
+            color: "var(--text-muted)",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "rgba(249, 115, 22, 0.06)";
+            e.currentTarget.style.borderColor = "rgba(249, 115, 22, 0.15)";
+            e.currentTarget.style.color = "#f97316";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "var(--bg-depth-3)";
+            e.currentTarget.style.borderColor = "var(--border-subtle)";
+            e.currentTarget.style.color = "var(--text-muted)";
+          }}
         >
-          ✕ Cancel
+          Cancel
         </button>
       )}
     </div>

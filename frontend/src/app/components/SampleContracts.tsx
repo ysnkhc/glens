@@ -6,11 +6,13 @@ import React from "react";
 
 export const SAMPLE_CONTRACTS: {
   name: string;
+  label: string;
   risk: string;
   code: string;
 }[] = [
   {
-    name: "✅ Simple Storage (LOW risk)",
+    name: "Simple Storage",
+    label: "LOW",
     risk: "LOW",
     code: `# { "Depends": "py-genlayer:latest" }
 from genlayer import *
@@ -36,7 +38,8 @@ class SimpleStorage(gl.Contract):
 `,
   },
   {
-    name: "⚠️ AI Sentiment Analyzer (MEDIUM risk)",
+    name: "Sentiment Analyzer",
+    label: "MEDIUM",
     risk: "MEDIUM",
     code: `# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 from genlayer import *
@@ -73,7 +76,8 @@ class SentimentOracle(gl.Contract):
 `,
   },
   {
-    name: "🚨 Broken Contract (HIGH risk)",
+    name: "Broken Contract",
+    label: "HIGH",
     risk: "HIGH",
     code: `from genlayer import *
 
@@ -105,16 +109,22 @@ class BrokenContract:
   },
 ];
 
-const riskBorderColors: Record<string, string> = {
-  LOW: "border-l-emerald-500/50 hover:border-l-emerald-400",
-  MEDIUM: "border-l-amber-500/50 hover:border-l-amber-400",
-  HIGH: "border-l-red-500/50 hover:border-l-red-400",
+const RISK_DOT: Record<string, string> = {
+  LOW: "bg-green-400",
+  MEDIUM: "bg-amber-400",
+  HIGH: "bg-orange-500",
 };
 
-const riskHoverBg: Record<string, string> = {
-  LOW: "hover:bg-emerald-500/8",
-  MEDIUM: "hover:bg-amber-500/8",
-  HIGH: "hover:bg-red-500/8",
+const RISK_BORDER: Record<string, string> = {
+  LOW: "rgba(74, 222, 128, 0.2)",
+  MEDIUM: "rgba(251, 191, 36, 0.2)",
+  HIGH: "rgba(249, 115, 22, 0.2)",
+};
+
+const RISK_BG_HOVER: Record<string, string> = {
+  LOW: "rgba(74, 222, 128, 0.06)",
+  MEDIUM: "rgba(251, 191, 36, 0.06)",
+  HIGH: "rgba(249, 115, 22, 0.06)",
 };
 
 interface SampleContractsProps {
@@ -123,20 +133,38 @@ interface SampleContractsProps {
 
 export default function SampleContracts({ onSelect }: SampleContractsProps) {
   return (
-    <div className="flex items-center gap-2.5 flex-wrap">
-      <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">
+    <div className="flex items-center gap-2 flex-wrap">
+      <span
+        className="text-[10px] font-bold uppercase tracking-[0.12em]"
+        style={{ color: "var(--text-muted)" }}
+      >
         Examples
       </span>
-      <div className="h-4 w-px bg-slate-700/50" />
+      <div className="h-3.5 w-px" style={{ background: "var(--border-subtle)" }} />
       {SAMPLE_CONTRACTS.map((sample, i) => (
         <button
           key={i}
           onClick={() => onSelect(sample.code)}
-          className={`text-xs px-3.5 py-2 rounded-lg bg-indigo-500/8 text-indigo-300 border border-l-[3px] border-indigo-500/12 transition-all duration-200 cursor-pointer hover:scale-[1.02] active:scale-[0.98] ${
-            riskBorderColors[sample.risk] || ""
-          } ${riskHoverBg[sample.risk] || "hover:bg-indigo-500/15"} hover:border-indigo-500/25 font-medium`}
+          className="flex items-center gap-2 text-[11px] px-3 py-1.5 rounded-md font-semibold transition-all duration-200 cursor-pointer active:scale-[0.97]"
+          style={{
+            background: "var(--bg-depth-2)",
+            border: `1px solid ${RISK_BORDER[sample.risk] || "var(--border-subtle)"}`,
+            color: "var(--text-secondary)",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = RISK_BG_HOVER[sample.risk] || "var(--bg-depth-3)";
+            e.currentTarget.style.color = "var(--text-primary)";
+            e.currentTarget.style.transform = "translateY(-1px)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "var(--bg-depth-2)";
+            e.currentTarget.style.color = "var(--text-secondary)";
+            e.currentTarget.style.transform = "translateY(0)";
+          }}
         >
+          <span className={`w-1.5 h-1.5 rounded-full ${RISK_DOT[sample.risk] || "bg-slate-500"}`} />
           {sample.name}
+          <span className="text-[9px] font-bold opacity-50">{sample.label}</span>
         </button>
       ))}
     </div>

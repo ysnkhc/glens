@@ -5,10 +5,9 @@ import React, { useState, useCallback } from "react";
 interface CopyButtonProps {
   text: string;
   label?: string;
-  className?: string;
 }
 
-export default function CopyButton({ text, label, className = "" }: CopyButtonProps) {
+export default function CopyButton({ text, label = "Copy" }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
@@ -17,7 +16,7 @@ export default function CopyButton({ text, label, className = "" }: CopyButtonPr
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback for older browsers
+      // fallback
       const textarea = document.createElement("textarea");
       textarea.value = text;
       textarea.style.position = "fixed";
@@ -33,29 +32,31 @@ export default function CopyButton({ text, label, className = "" }: CopyButtonPr
 
   return (
     <button
-      onClick={handleCopy}
-      className={`copy-btn ${className}`}
-      title={copied ? "Copied!" : label || "Copy to clipboard"}
-      aria-label={copied ? "Copied!" : label || "Copy to clipboard"}
+      onClick={(e) => {
+        e.stopPropagation();
+        handleCopy();
+      }}
+      className="copy-btn"
+      title={label}
+      aria-label={label}
     >
       {copied ? (
         <svg
-          width="14"
-          height="14"
+          width="13" height="13"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
           strokeWidth="2.5"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="text-emerald-400 animate-success-pop"
+          style={{ color: "var(--color-primary)" }}
+          className="animate-success-pop"
         >
           <polyline points="20 6 9 17 4 12" />
         </svg>
       ) : (
         <svg
-          width="14"
-          height="14"
+          width="13" height="13"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"

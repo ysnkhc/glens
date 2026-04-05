@@ -23,56 +23,98 @@ interface SimulationPanelProps {
   network?: "studio" | "bradbury";
 }
 
-const VERDICT: Record<string, { emoji: string; headline: string; sub: string; ring: string; glow: string }> = {
+const VERDICT: Record<string, { headline: string; sub: string; color: string; ringColor: string; bgColor: string }> = {
   AGREED: {
-    emoji: "✅",
     headline: "Consensus Reached",
     sub: "All validators produced consistent outputs",
-    ring: "border-emerald-500/30",
-    glow: "bg-emerald-500/6",
+    color: "#4ade80",
+    ringColor: "rgba(74, 222, 128, 0.25)",
+    bgColor: "rgba(74, 222, 128, 0.04)",
   },
   DISAGREED: {
-    emoji: "🚨",
     headline: "No Consensus",
     sub: "Validators produced conflicting outputs",
-    ring: "border-red-500/30",
-    glow: "bg-red-500/6",
+    color: "#f97316",
+    ringColor: "rgba(249, 115, 22, 0.25)",
+    bgColor: "rgba(249, 115, 22, 0.04)",
   },
   FAILED: {
-    emoji: "💥",
     headline: "Execution Failed",
     sub: "The contract could not be executed",
-    ring: "border-orange-500/30",
-    glow: "bg-orange-500/6",
+    color: "#ef4444",
+    ringColor: "rgba(239, 68, 68, 0.25)",
+    bgColor: "rgba(239, 68, 68, 0.04)",
   },
   TIMEOUT: {
-    emoji: "⏱️",
     headline: "Timed Out",
     sub: "Validators did not respond in time",
-    ring: "border-amber-500/30",
-    glow: "bg-amber-500/6",
+    color: "#fbbf24",
+    ringColor: "rgba(251, 191, 36, 0.25)",
+    bgColor: "rgba(251, 191, 36, 0.04)",
   },
   BLOCKED: {
-    emoji: "🚫",
     headline: "Prompt Blocked",
     sub: "Prompt contains non-deterministic language",
-    ring: "border-purple-500/30",
-    glow: "bg-purple-500/6",
+    color: "#a78bfa",
+    ringColor: "rgba(167, 139, 250, 0.25)",
+    bgColor: "rgba(167, 139, 250, 0.04)",
   },
 };
 
-const HEADLINE_COLOR: Record<string, string> = {
-  AGREED: "text-emerald-400",
-  DISAGREED: "text-red-400",
-  FAILED: "text-orange-400",
-  TIMEOUT: "text-amber-400",
-  BLOCKED: "text-purple-400",
-};
+// Animated ring indicator for verdict
+function VerdictRing({ color, size = 56 }: { color: string; size?: number }) {
+  const r = size / 2 - 5;
+  const circumference = 2 * Math.PI * r;
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <div
+        className="absolute inset-0 rounded-full"
+        style={{
+          border: `2px solid ${color}`,
+          opacity: 0.12,
+          animation: "breathe 3s ease-in-out infinite",
+        }}
+      />
+      <svg width={size} height={size} className="absolute inset-0" style={{ transform: "rotate(-90deg)" }}>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth="2.5"
+          strokeDasharray={circumference}
+          strokeDashoffset={circumference * 0.08}
+          strokeLinecap="round"
+          style={{ filter: `drop-shadow(0 0 6px ${color})`, transition: "stroke-dashoffset 1s ease" }}
+        />
+      </svg>
+      {/* Center icon */}
+      <div className="absolute inset-0 flex items-center justify-center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          {color === "#4ade80" ? (
+            <polyline points="20 6 9 17 4 12" />
+          ) : color === "#f97316" || color === "#ef4444" ? (
+            <>
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </>
+          ) : (
+            <>
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </>
+          )}
+        </svg>
+      </div>
+    </div>
+  );
+}
 
 export default function SimulationPanel({ result, isLoading, onSimulate, network = "studio" }: SimulationPanelProps) {
   const networkLabel = network === "studio" ? "Studio" : "Bradbury";
   const verdict = result ? (VERDICT[result.consensus] ?? VERDICT["FAILED"]) : null;
-  const headColor = result ? (HEADLINE_COLOR[result.consensus] ?? "text-slate-300") : "";
   const isOnChain =
     result?.execution?.source === "ONCHAIN_CONFIRMED" ||
     result?.execution?.source === "ONCHAIN_CONSENSUS_FAILURE";
@@ -83,11 +125,11 @@ export default function SimulationPanel({ result, isLoading, onSimulate, network
       <button
         onClick={onSimulate}
         disabled={isLoading}
-        className="btn-purple w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold"
+        className="btn-purple w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold"
       >
         {isLoading ? (
           <>
-            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            <div className="w-4 h-4 border-2 border-[#07090f]/30 border-t-[#07090f] rounded-full animate-spin" />
             Running consensus…
           </>
         ) : (
@@ -96,51 +138,56 @@ export default function SimulationPanel({ result, isLoading, onSimulate, network
               <circle cx="12" cy="12" r="10" />
               <polygon points="10,8 16,12 10,16 10,8" />
             </svg>
-            ⛓️ Run Consensus Test
+            Run Consensus Test
           </>
         )}
       </button>
 
       {/* ─── Compact explainer ───────────────────── */}
-      <p className="text-center text-[11px] text-slate-500 leading-relaxed px-2">
+      <p className="text-center text-[11px] leading-relaxed px-2" style={{ color: "var(--text-muted)" }}>
         5 independent {networkLabel} validators each run the AI prompt and vote — one wallet signature required
       </p>
 
       {/* ─── Verdict card ────────────────────────── */}
       {result && verdict && (
-        <div className={`rounded-2xl border ${verdict.ring} ${verdict.glow} p-6 text-center animate-fade-in-up`}>
-          <div className="text-4xl mb-3" style={{ animation: "riskDotPulse 3s ease-in-out infinite" }}>
-            {verdict.emoji}
+        <div
+          className="rounded-xl p-6 text-center animate-fade-in-up"
+          style={{
+            background: verdict.bgColor,
+            border: `1px solid ${verdict.ringColor}`,
+          }}
+        >
+          <div className="flex justify-center mb-4">
+            <VerdictRing color={verdict.color} />
           </div>
-          <div className={`text-2xl font-extrabold tracking-tight ${headColor} mb-1`}>
+          <div className="text-xl font-black tracking-tight mb-1" style={{ color: verdict.color }}>
             {verdict.headline}
           </div>
-          <div className="text-xs text-slate-500 mb-5">{verdict.sub}</div>
+          <div className="text-xs mb-5" style={{ color: "var(--text-muted)" }}>{verdict.sub}</div>
 
           {/* ─── Stats ─── */}
           <div className="flex items-center justify-center gap-6">
             <div className="text-center">
-              <div className="text-lg font-black text-slate-200">5</div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-wider">Validators</div>
+              <div className="text-lg font-black font-mono" style={{ color: "var(--text-primary)" }}>5</div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.1em]" style={{ color: "var(--text-faint)" }}>Validators</div>
             </div>
             {result.prompts_found > 0 && (
               <>
-                <div className="w-px h-7 bg-slate-700/60" />
+                <div className="w-px h-6" style={{ background: "var(--border-subtle)" }} />
                 <div className="text-center">
-                  <div className="text-lg font-black text-blue-400">{result.prompts_found}</div>
-                  <div className="text-[10px] text-slate-500 uppercase tracking-wider">Prompts</div>
+                  <div className="text-lg font-black font-mono" style={{ color: "var(--color-primary)" }}>{result.prompts_found}</div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.1em]" style={{ color: "var(--text-faint)" }}>Prompts</div>
                 </div>
               </>
             )}
             {result.risk && result.risk !== "N/A" && (
               <>
-                <div className="w-px h-7 bg-slate-700/60" />
+                <div className="w-px h-6" style={{ background: "var(--border-subtle)" }} />
                 <div className="text-center">
-                  <div className={`text-lg font-black ${
-                    result.risk === "LOW" ? "text-emerald-400" :
-                    result.risk === "MEDIUM" ? "text-amber-400" : "text-red-400"
-                  }`}>{result.risk}</div>
-                  <div className="text-[10px] text-slate-500 uppercase tracking-wider">Risk</div>
+                  <div className={`text-lg font-black font-mono`} style={{
+                    color: result.risk === "LOW" ? "#4ade80" : result.risk === "MEDIUM" ? "#fbbf24" : "#f97316",
+                  }}>{result.risk}</div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.1em]" style={{ color: "var(--text-faint)" }}>Risk</div>
                 </div>
               </>
             )}
@@ -148,18 +195,28 @@ export default function SimulationPanel({ result, isLoading, onSimulate, network
 
           {/* ─── On-chain badge ─── */}
           {isOnChain && (
-            <div className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-medium bg-slate-800/60 border border-slate-700/30 text-slate-400">
-              <span>⛓️</span>
+            <div
+              className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-semibold"
+              style={{
+                background: "var(--bg-depth-3)",
+                border: "1px solid var(--border-subtle)",
+                color: "var(--text-muted)",
+              }}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              </svg>
               On-chain verified · {networkLabel} network
             </div>
           )}
 
           {/* ─── Human-readable failure hint ─── */}
           {result.failureReason && result.consensus !== "AGREED" && result.consensus !== "BLOCKED" && (
-            <p className="text-[11px] text-slate-500 mt-3 italic">{result.failureReason}</p>
+            <p className="text-[11px] mt-3 italic" style={{ color: "var(--text-muted)" }}>{result.failureReason}</p>
           )}
           {result.message && result.consensus === "BLOCKED" && (
-            <p className="text-xs text-purple-400/80 mt-3">{result.message}</p>
+            <p className="text-xs mt-3" style={{ color: "rgba(167, 139, 250, 0.7)" }}>{result.message}</p>
           )}
         </div>
       )}
