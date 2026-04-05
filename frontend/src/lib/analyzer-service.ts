@@ -878,8 +878,18 @@ Rules:
     };
   } catch (err) {
     timer.stop();
-    const durationMs = Date.now() - startTime;
+
+    // ─── GUARD: User rejected → re-throw, never show fake results ───
+    if (isUserRejection(err)) {
+      throw new Error("Transaction cancelled. Please approve the wallet popup to continue.");
+    }
+    // Also catch the re-thrown message from the inner catch
     const errMsg = err instanceof Error ? err.message : String(err);
+    if (errMsg.includes("Transaction cancelled")) {
+      throw err;
+    }
+
+    const durationMs = Date.now() - startTime;
     const errFull = err instanceof Error ? err.stack || err.message : String(err);
 
     // 🔴 FULL ERROR LOG

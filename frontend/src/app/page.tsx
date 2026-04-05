@@ -241,9 +241,15 @@ export default function Home() {
       const result = await explainContract(code, walletAddress, network);
       setExplanation(result.text);
       logGL("ACTION ✅ Explain complete", { resultLength: result.text.length, source: result.execution.source });
-    } catch {
-      setExplanation("Could not generate explanation.");
-      logGL("ACTION ❌ Explain failed", {});
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("Transaction cancelled") || msg.includes("user rejected")) {
+        setError("Transaction cancelled. Please approve the wallet popup to continue.");
+        logGL("ACTION ✘ Explain rejected by user", {});
+      } else {
+        setExplanation("Could not generate explanation.");
+        logGL("ACTION ❌ Explain failed", {});
+      }
     } finally {
       setIsExplaining(false);
     }
@@ -305,31 +311,40 @@ export default function Home() {
         txHash: data.execution?.txHash || undefined,
         mismatch: isMismatch,
       });
-    } catch {
-      const fallbackResult = {
-        validators: [],
-        consensus: "ERROR",
-        confidence: 0,
-        agreement_rate: 0,
-        risk: "HIGH",
-        prompts_found: 0,
-        message: "Consensus test failed.",
-        execution: computeTrust("CLIENT_FALLBACK"),
-        failureType: "NETWORK_ERROR" as const,
-        failureReason: "Unhandled error during consensus execution.",
-      };
-      setSimulationResult(fallbackResult);
-      setConsensusStatus(null);
-      logGL("ACTION ✘ Simulate failed", {});
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("Transaction cancelled") || msg.includes("user rejected")) {
+        // User rejected — show nothing, clear state
+        setSimulationResult(null);
+        setConsensusStatus(null);
+        setError("Transaction cancelled. Please approve the wallet popup to run consensus.");
+        logGL("ACTION ✘ Simulate rejected by user", {});
+      } else {
+        const fallbackResult = {
+          validators: [],
+          consensus: "ERROR",
+          confidence: 0,
+          agreement_rate: 0,
+          risk: "HIGH",
+          prompts_found: 0,
+          message: "Consensus test failed.",
+          execution: computeTrust("CLIENT_FALLBACK"),
+          failureType: "NETWORK_ERROR" as const,
+          failureReason: "Unhandled error during consensus execution.",
+        };
+        setSimulationResult(fallbackResult);
+        setConsensusStatus(null);
+        logGL("ACTION ✘ Simulate failed", {});
 
-      recordConsensusResult({
-        prompt: code.slice(0, 200),
-        predictedRisk: currentPrediction,
-        actualOutcome: "NETWORK_ERROR",
-        failureType: "NETWORK_ERROR",
-        failureReason: "Unhandled error during consensus execution.",
-        mismatch: currentPrediction === "LOW",
-      });
+        recordConsensusResult({
+          prompt: code.slice(0, 200),
+          predictedRisk: currentPrediction,
+          actualOutcome: "NETWORK_ERROR",
+          failureType: "NETWORK_ERROR",
+          failureReason: "Unhandled error during consensus execution.",
+          mismatch: currentPrediction === "LOW",
+        });
+      }
     } finally {
       setIsSimulating(false);
       abortRef.current = null;
@@ -388,16 +403,27 @@ export default function Home() {
         const newResult = await analyzeContract(data.fixed_code, walletAddress, network);
         setResult(newResult);
         logGL("ACTION ✅ Fix: auto re-analyze complete", { riskLevel: newResult.risk_level });
-      } catch {
-        setResult(null);
+      } catch (reErr: unknown) {
+        const reMsg = reErr instanceof Error ? reErr.message : "";
+        if (reMsg.includes("Transaction cancelled") || reMsg.includes("user rejected")) {
+          setError("Transaction cancelled. Please approve the wallet popup to continue.");
+        } else {
+          setResult(null);
+        }
         logGL("ACTION ❌ Fix: auto re-analyze failed", {});
       } finally {
         setIsLoading(false);
       }
-    } catch {
-      setFixToast("Could not fix contract.");
-      setTimeout(() => setFixToast(null), 5000);
-      logGL("ACTION ❌ Fix failed", {});
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("Transaction cancelled") || msg.includes("user rejected")) {
+        setError("Transaction cancelled. Please approve the wallet popup to continue.");
+        logGL("ACTION ✘ Fix rejected by user", {});
+      } else {
+        setFixToast("Could not fix contract.");
+        setTimeout(() => setFixToast(null), 5000);
+        logGL("ACTION ❌ Fix failed", {});
+      }
     } finally {
       setIsFixing(false);
     }
