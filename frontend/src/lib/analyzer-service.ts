@@ -174,6 +174,27 @@ export interface ExplainResult {
 
 // ─── Helpers ───────────────────────────────────────────────────
 
+/**
+ * Detect if an error is a user wallet rejection.
+ * When the user rejects a transaction, we must NOT fall back to
+ * client-side analysis — that would make the app appear to work
+ * locally when it should require on-chain execution.
+ */
+function isUserRejection(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes("user rejected") ||
+    msg.includes("user denied") ||
+    msg.includes("rejected the request") ||
+    msg.includes("user cancelled") ||
+    msg.includes("user canceled") ||
+    msg.includes("request rejected") ||
+    msg.includes("action_rejected") ||
+    msg.includes("user disapproved")
+  );
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function safeParseJSON(text: string): any {
   let cleaned = text.trim();
@@ -481,6 +502,11 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
       }
       execution = { ...computeTrust("ONCHAIN_CONFIRMED", validationOk), txHash: String(txHash) };
     } catch (err) {
+      // ─── GUARD: User rejected → DO NOT fallback, surface the error ───
+      if (isUserRejection(err)) {
+        logGL("ANALYZE → USER REJECTED TX", {});
+        throw new Error("Transaction cancelled. Please approve the wallet popup to continue.");
+      }
       const failure = detectConsensusFailure(err);
       logGL("ANALYZE → TX ERROR", { error: err instanceof Error ? err.message : err, failure });
       console.warn("On-chain analysis failed, using client-side fallback:", err);
@@ -573,6 +599,11 @@ export async function explainContract(code: string, walletAddress?: string | nul
     const source = result ? "ONCHAIN_CONFIRMED" : "CLIENT_FALLBACK";
     return { text, execution: { ...computeTrust(source as ExecutionSource), txHash: String(txHash) } };
   } catch (err) {
+    // ─── GUARD: User rejected → DO NOT fallback ───
+    if (isUserRejection(err)) {
+      logGL("EXPLAIN → USER REJECTED TX", {});
+      throw new Error("Transaction cancelled. Please approve the wallet popup to continue.");
+    }
     const failure = detectConsensusFailure(err);
     logGL("EXPLAIN → TX ERROR", { error: err instanceof Error ? err.message : err, failure });
     console.warn("On-chain explain failed:", err);
@@ -718,6 +749,11 @@ Rules:
       );
       genLayerTxId = txHash;
     } catch (writeErr) {
+      // ─── GUARD: User rejected → surface immediately, no recovery ───
+      if (isUserRejection(writeErr)) {
+        logGL("SIMULATE → USER REJECTED TX", {});
+        throw new Error("Transaction cancelled. Please approve the wallet popup to continue.");
+      }
       const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
 
       // ─── SDK BYPASS: Recover txId from EVM receipt ─────────
@@ -1183,6 +1219,11 @@ export async function fixContract(code: string, walletAddress?: string | null, n
         aiExecution: { ...computeTrust("ONCHAIN_CONFIRMED"), txHash: String(txHash) },
       };
     } catch (err) {
+      // ─── GUARD: User rejected → DO NOT fallback ───
+      if (isUserRejection(err)) {
+        logGL("FIX → USER REJECTED TX", {});
+        throw new Error("Transaction cancelled. Please approve the wallet popup to continue.");
+      }
       const failure = detectConsensusFailure(err);
       logGL("FIX → TX ERROR", { error: err instanceof Error ? err.message : err, failure });
       console.warn("On-chain fix failed:", err);
