@@ -54,6 +54,7 @@ export default function Home() {
   const [fixToast, setFixToast] = useState<string | null>(null);
   const [fixResult, setFixResult] = useState<any | null>(null);
   const [activePanel, setActivePanel] = useState<"editor" | "results">("editor");
+  const [bradburyDismissed, setBradburyDismissed] = useState(false);
 
   // Consensus polling state
   const [consensusStatus, setConsensusStatus] = useState<string | null>(null);
@@ -152,6 +153,7 @@ export default function Home() {
     setFixToast(null);
     setError(null);
     setConsensusStatus(null);
+    setBradburyDismissed(false);
     getConnectedAddress().then((addr) => setWalletAddress(addr));
     logGL("ACTION → Network changed", { network: newNetwork });
   }, []);
@@ -515,22 +517,48 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4 shrink-0 animate-stagger delay-100">
             <SampleContracts onSelect={handleSampleSelect} />
 
-            {/* Bradbury warning banner */}
-            {network === "bradbury" && (
+            {/* Bradbury warning banner — dismissible */}
+            {network === "bradbury" && !bradburyDismissed && (
               <div
-                className="flex items-center gap-2 px-3 py-1.5 rounded-md text-[11px] font-medium"
+                className="flex items-center gap-3 px-4 py-2.5 rounded-lg text-xs font-medium animate-fade-in-up"
                 style={{
-                  background: "rgba(251, 191, 36, 0.05)",
-                  border: "1px solid rgba(251, 191, 36, 0.1)",
+                  background: "rgba(251, 191, 36, 0.06)",
+                  border: "1px solid rgba(251, 191, 36, 0.12)",
                   color: "#fbbf24",
                 }}
               >
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
                   <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
                   <line x1="12" y1="9" x2="12" y2="13" />
                   <line x1="12" y1="17" x2="12.01" y2="17" />
                 </svg>
-                Uses real LLM validators — may take 2–5 minutes. Switch to Studio for fast results.
+                <span className="flex-1">Bradbury validators may be slow or unresponsive. For reliable results, use Studio.</span>
+                <button
+                  onClick={() => handleNetworkChange("studio")}
+                  className="shrink-0 px-2.5 py-1 rounded-md text-[10px] font-bold transition-all duration-150"
+                  style={{
+                    background: "rgba(74, 222, 128, 0.1)",
+                    border: "1px solid rgba(74, 222, 128, 0.2)",
+                    color: "#4ade80",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(74, 222, 128, 0.18)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(74, 222, 128, 0.1)"; }}
+                >
+                  Switch to Studio
+                </button>
+                <button
+                  onClick={() => setBradburyDismissed(true)}
+                  className="shrink-0 transition-colors duration-150"
+                  style={{ color: "rgba(251, 191, 36, 0.4)" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = "#fbbf24"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = "rgba(251, 191, 36, 0.4)"; }}
+                  aria-label="Dismiss"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
               </div>
             )}
 

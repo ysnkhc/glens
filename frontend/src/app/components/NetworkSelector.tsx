@@ -46,7 +46,7 @@ export default function NetworkSelector({ network, onNetworkChange }: NetworkSel
           <span className={`text-[8px] block leading-tight ${
             network === "studio" ? "text-green-500/60" : "text-slate-700"
           }`}>
-            Fast
+            Recommended · ~35s
           </span>
         </div>
       </button>
@@ -80,7 +80,7 @@ export default function NetworkSelector({ network, onNetworkChange }: NetworkSel
           <span className={`text-[8px] block leading-tight ${
             network === "bradbury" ? "text-amber-500/60" : "text-slate-700"
           }`}>
-            Testnet
+            Experimental
           </span>
         </div>
       </button>
