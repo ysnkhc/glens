@@ -244,7 +244,9 @@ export default function Home() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "";
       if (msg.includes("Transaction cancelled") || msg.includes("user rejected")) {
-        setError("Transaction cancelled. Please approve the wallet popup to continue.");
+        // Show a brief toast — do NOT wipe analysis results
+        setFixToast("Explain cancelled — approve the wallet popup to continue.");
+        setTimeout(() => setFixToast(null), 5000);
         logGL("ACTION ✘ Explain rejected by user", {});
       } else {
         setExplanation("Could not generate explanation.");
@@ -314,10 +316,10 @@ export default function Home() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "";
       if (msg.includes("Transaction cancelled") || msg.includes("user rejected")) {
-        // User rejected — show nothing, clear state
-        setSimulationResult(null);
+        // Show a brief toast — keep analysis results visible
         setConsensusStatus(null);
-        setError("Transaction cancelled. Please approve the wallet popup to run consensus.");
+        setFixToast("Consensus cancelled — approve the wallet popup to run the test.");
+        setTimeout(() => setFixToast(null), 5000);
         logGL("ACTION ✘ Simulate rejected by user", {});
       } else {
         const fallbackResult = {
@@ -406,7 +408,9 @@ export default function Home() {
       } catch (reErr: unknown) {
         const reMsg = reErr instanceof Error ? reErr.message : "";
         if (reMsg.includes("Transaction cancelled") || reMsg.includes("user rejected")) {
-          setError("Transaction cancelled. Please approve the wallet popup to continue.");
+          // Toast only — keep existing results
+          setFixToast("Re-analysis cancelled — approve the wallet popup to continue.");
+          setTimeout(() => setFixToast(null), 5000);
         } else {
           setResult(null);
         }
@@ -417,7 +421,9 @@ export default function Home() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "";
       if (msg.includes("Transaction cancelled") || msg.includes("user rejected")) {
-        setError("Transaction cancelled. Please approve the wallet popup to continue.");
+        // Show a brief toast — keep analysis results visible
+        setFixToast("Fix cancelled — approve the wallet popup to continue.");
+        setTimeout(() => setFixToast(null), 5000);
         logGL("ACTION ✘ Fix rejected by user", {});
       } else {
         setFixToast("Could not fix contract.");
