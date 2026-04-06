@@ -24,7 +24,29 @@ export function extractPrompts(code: string): string[] {
       }
     }
   }
-  return prompts;
+
+  // Second pass: extract multi-line concatenated string prompts
+  // Matches patterns like exec_prompt(f"part1" "part2" "part3")
+  const blockRegex = /exec_prompt\s*\(([\s\S]*?)\)/g;
+  let blockMatch;
+  while ((blockMatch = blockRegex.exec(code)) !== null) {
+    const block = blockMatch[1];
+    const segmentRegex = /f?["']{1,3}([\s\S]*?)["']{1,3}/g;
+    let segMatch;
+    const segments: string[] = [];
+    while ((segMatch = segmentRegex.exec(block)) !== null) {
+      if (segMatch[1]) {
+        segments.push(segMatch[1]);
+      }
+    }
+    const joined = segments.join(" ").trim();
+    if (joined.length >= 10) {
+      prompts.push(joined);
+    }
+  }
+
+  // Deduplicate prompts
+  return [...new Set(prompts)];
 }
 
 /**
@@ -35,6 +57,8 @@ export const CONSTRAINED_KEYWORDS = [
   "one word", "JSON only", "valid JSON",
   "POSITIVE, NEGATIVE, or NEUTRAL",
   "YES or NO",
+  "city name", "TOXIC or SAFE", "decimal places",
+  "Return ONLY", "nothing else",
 ];
 
 /**
