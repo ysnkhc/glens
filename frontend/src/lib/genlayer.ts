@@ -185,7 +185,7 @@ export interface ConsensusResult {
   data?: any;
 }
 
-const TERMINAL_AGREED = ["FINALIZED", "ACCEPTED"];
+const TERMINAL_AGREED = ["FINALIZED", "ACCEPTED", "EXECUTED"];
 const TERMINAL_FAILED = ["UNDETERMINED", "LEADER_TIMEOUT", "CANCELED"];
 
 export async function pollConsensusStatus(
@@ -194,28 +194,57 @@ export async function pollConsensusStatus(
   client: any,
   onProgress?: (status: string, elapsed: number) => void,
   signal?: AbortSignal,
+  network: NetworkType = "studio",
 ): Promise<ConsensusResult> {
+  const pollInterval = network === "bradbury" ? 10000 : 30000;
+  const maxTimeout = network === "bradbury" ? 5 * 60 * 1000 : 10 * 60 * 1000; // 5min / 10min
   const start = Date.now();
   let lastStatus = "";
+  let pollCount = 0;
+
+  console.log(`🔄 POLL START — txId: ${txId}, network: ${network}, interval: ${pollInterval}ms, timeout: ${maxTimeout / 1000}s`);
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
     if (signal?.aborted) return { consensus: "CANCELLED", txId, status: "CANCELLED" };
     const elapsed = Date.now() - start;
+
+    // ─── Timeout guard: don't poll forever ───
+    if (elapsed > maxTimeout) {
+      console.log(`⏱️ POLL TIMEOUT after ${(elapsed / 1000).toFixed(0)}s — lastStatus: "${lastStatus}"`);
+      if (onProgress) onProgress("TIMEOUT", elapsed);
+      return {
+        consensus: "TIMEOUT",
+        txId,
+        status: lastStatus || "TIMEOUT",
+        statusName: lastStatus || "TIMEOUT",
+        resultName: "TIMEOUT",
+      };
+    }
+
+    pollCount++;
     try {
       const tx = await client.getTransaction({ hash: txId });
-      if (!tx) { if (onProgress) onProgress("WAITING", elapsed); await new Promise(r => setTimeout(r, 30000)); continue; }
+      if (!tx) {
+        console.log(`🔄 POLL #${pollCount} (${(elapsed / 1000).toFixed(0)}s) — tx NOT FOUND (null), waiting...`);
+        if (onProgress) onProgress("WAITING", elapsed);
+        await new Promise(r => setTimeout(r, pollInterval));
+        continue;
+      }
       const statusName = tx.statusName || "";
       const resultName = tx.resultName || "";
+      console.log(`🔄 POLL #${pollCount} (${(elapsed / 1000).toFixed(0)}s) — statusName: "${statusName}", resultName: "${resultName}"`);
       if (!lastStatus) {
         console.log("📍 TX AUDIT — statusName:", statusName, "resultName:", resultName, "keys:", Object.keys(tx));
       }
       if (statusName !== lastStatus) { lastStatus = statusName; if (onProgress) onProgress(statusName, elapsed); }
       if (TERMINAL_AGREED.includes(statusName)) {
+        console.log(`✅ POLL TERMINAL AGREED — statusName: "${statusName}", resultName: "${resultName}"`);
         // ACCEPTED  = validators agreed after appeal rounds (resultName is often empty)
         // FINALIZED = validators agreed in first round (resultName = "AGREE")
-        // Both are genuine consensus agreement — never map to DISAGREED
-        const isAgreed = statusName === "ACCEPTED" || resultName === "AGREE" || resultName === "";
+        // EXECUTED  = Bradbury terminal success status
+        // All are genuine consensus agreement — never map to DISAGREED
+        const isAgreed = statusName === "ACCEPTED" || statusName === "EXECUTED" || resultName === "AGREE" || resultName === "";
         return {
           consensus: isAgreed ? "AGREED" : "DISAGREED",
           txId, status: statusName, statusName, resultName,
@@ -223,13 +252,14 @@ export async function pollConsensusStatus(
         };
       }
       if (TERMINAL_FAILED.includes(statusName)) {
+        console.log(`❌ POLL TERMINAL FAILED — statusName: "${statusName}", resultName: "${resultName}"`);
         return { consensus: "DISAGREED", txId, status: statusName, statusName, resultName, data: tx };
       }
     } catch (err) {
       if (signal?.aborted) return { consensus: "CANCELLED", txId, status: "CANCELLED" };
-      console.warn(`Consensus poll error (${(elapsed / 1000).toFixed(0)}s):`, err);
+      console.warn(`🔄 POLL #${pollCount} ERROR (${(elapsed / 1000).toFixed(0)}s):`, err);
     }
-    await new Promise(r => setTimeout(r, 30000));
+    await new Promise(r => setTimeout(r, pollInterval));
   }
 }
 
@@ -302,6 +332,8 @@ export async function createWriteClient(walletAddress: string, network: NetworkT
   }
 
   // Bradbury: hybrid provider (Rabby signs, GenLayer RPC for receipts)
+  // Ensure wallet is on Bradbury chain (4221) — prevents chainId mismatch after long polls
+  await ensureWalletNetwork("bradbury");
   const hybridProvider = createHybridProvider(RPC.bradbury);
   return createClient({
     chain: testnetBradbury,

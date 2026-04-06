@@ -334,7 +334,7 @@ function deriveHeuristicAnalysis(
 function generateExplanation(code: string): string {
   const parsed = parseContract(code);
   const report = runRules(parsed, code);
-  const risk = scoreRisk(parsed, report);
+  const risk = scoreRisk(parsed, report, code);
   const core = computeAnalysisCore(parsed);
 
   const parts: string[] = [];
@@ -391,12 +391,12 @@ function ruleBasedFix(code: string): FixResult {
   // Re-analyze before fix for comparison
   const beforeParsed = parseContract(code);
   const beforeReport = runRules(beforeParsed, code);
-  const beforeRisk = scoreRisk(beforeParsed, beforeReport);
+  const beforeRisk = scoreRisk(beforeParsed, beforeReport, code);
 
   // After-fix analysis is already done inside fixer, but we need risk score
   const afterParsed = parseContract(result.fixedCode);
   const afterReport = runRules(afterParsed, result.fixedCode);
-  const afterRisk = scoreRisk(afterParsed, afterReport);
+  const afterRisk = scoreRisk(afterParsed, afterReport, result.fixedCode);
 
   const improvement = computeImprovement(beforeRisk, afterRisk);
 
@@ -435,7 +435,7 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
   logGL("ANALYZE → CLIENT START", { codeLength: code.length, walletAddress: walletAddress?.slice(0, 10) + "..." });
   const parsed = parseContract(code);
   const report = runRules(parsed, code);
-  const riskLevel = scoreRisk(parsed, report);
+  const riskLevel = scoreRisk(parsed, report, code);
   const core = computeAnalysisCore(parsed);
   logGL("ANALYZE → CLIENT DONE", { riskLevel, issues: report.issues.length, warnings: report.warnings.length, core });
 
@@ -454,27 +454,59 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
 
 
 
-      const txHash = await sendSerialTransaction(() =>
-        client.writeContract({
-          address: CONTRACT_ADDRESS[network] as `0x${string}`,
-          functionName: "analyze_contract",
-          args: [safeSummary],
-          value: 0n,
-        })
-      );
+      // Hoist genLayerTxId so catch block can access it
+      let genLayerTxId: string | undefined;
+
+      try {
+        const txHash = await sendSerialTransaction(() =>
+          client.writeContract({
+            address: CONTRACT_ADDRESS[network] as `0x${string}`,
+            functionName: "analyze_contract",
+            args: [safeSummary],
+            value: 0n,
+          })
+        );
+        genLayerTxId = String(txHash);
+      } catch (writeErr) {
+        // ─── GUARD: User rejected → surface immediately ───
+        if (isUserRejection(writeErr)) {
+          throw new Error("Transaction cancelled. Please approve the wallet popup to continue.");
+        }
+        const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+
+        // ─── SDK BYPASS: Recover txId from EVM receipt ─────────
+        const evmHash = getLastEvmTxHash();
+        if (evmHash) {
+          try {
+            const receipt = await pollForReceipt(evmHash, 30000, network);
+            genLayerTxId = extractGenLayerTxId(receipt) || undefined;
+            if (!genLayerTxId) {
+              throw new Error(`SDK bypass failed: no txId in receipt logs. SDK error: ${writeMsg}`);
+            }
+          } catch (receiptErr) {
+            throw new Error(`writeContract failed and recovery failed: ${writeMsg}`);
+          }
+        } else {
+          throw new Error(`writeContract failed before submission: ${writeMsg}`);
+        }
+      }
+
+      // ✅ GUARD: Validate we have a GenLayer txId
+      if (!genLayerTxId || genLayerTxId === "" || genLayerTxId === "0x") {
+        throw new Error(`No valid GenLayer txId: "${genLayerTxId}"`);
+      }
 
       // 🔴 AUDIT LOG: After txHash
-      console.log("TX HASH:", txHash);
-      logGL("ANALYZE → TX SENT", { txHash });
+      console.log("TX HASH:", genLayerTxId);
+      logGL("ANALYZE → TX SENT", { genLayerTxId });
 
       // ─── Poll for consensus (same engine as simulate) ──────────────────
-      // waitForTransactionReceipt is unreliable: it waits for a specific enum
-      // value that the TX may never reach (e.g. FINALIZED vs ACCEPTED mismatch).
-      // Our pollConsensusStatus handles all terminal states correctly.
       const analyzePollResult = await pollConsensusStatus(
-        String(txHash),
+        genLayerTxId,
         client,
         undefined, // no UI progress needed for analyze
+        undefined, // no abort signal
+        network,
       );
 
       if (analyzePollResult.consensus !== "AGREED") {
@@ -500,7 +532,7 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
         aiAnalysis = safeParseJSON(String(resultStr));
         validationOk = false;
       }
-      execution = { ...computeTrust("ONCHAIN_CONFIRMED", validationOk), txHash: String(txHash) };
+      execution = { ...computeTrust("ONCHAIN_CONFIRMED", validationOk), txHash: genLayerTxId };
     } catch (err) {
       // ─── GUARD: User rejected → DO NOT fallback, surface the error ───
       if (isUserRejection(err)) {
@@ -522,12 +554,65 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
 
   const analysisSource: AnalysisSource = execution.source === "ONCHAIN_CONFIRMED" ? "ai_onchain" : "heuristic_client";
 
-  logGL("ANALYZE → RESULT", { riskLevel, source: execution.source, trustScore: execution.trustScore });
+  // ─── FIX: On-chain AI override ─────────────────────────────────
+  // When the on-chain AI (validated by GenLayer consensus) reports HIGH risk
+  // but the client-side scorer says LOW, trust the on-chain result.
+  // The on-chain AI sees the FULL contract context; the client scorer only
+  // sees structural patterns and may miss dynamic/runtime risks.
+  let finalRisk = riskLevel;
+  const finalIssues = [...report.issueMessages];
+  const finalWarnings = [...report.warningMessages];
+  const finalSuggestions = [...report.suggestions];
+
+  if (analysisSource === "ai_onchain" && aiAnalysis) {
+    const aiConsensusRisk = String(aiAnalysis.consensus_risk || "").toUpperCase();
+    const aiDeterminismRisk = String(aiAnalysis.determinism_risk || "").toUpperCase();
+
+    // AI says HIGH/CRITICAL → upgrade from LOW to at least MEDIUM, or to HIGH
+    if (aiConsensusRisk === "CRITICAL" || aiDeterminismRisk === "CRITICAL") {
+      finalRisk = "HIGH";
+      logGL("ANALYZE → AI OVERRIDE", { from: riskLevel, to: "HIGH", reason: "on-chain AI rated CRITICAL" });
+    } else if (aiConsensusRisk === "HIGH" || aiDeterminismRisk === "HIGH") {
+      if (finalRisk === "LOW") {
+        finalRisk = "HIGH";
+        logGL("ANALYZE → AI OVERRIDE", { from: riskLevel, to: "HIGH", reason: "on-chain AI rated HIGH" });
+      }
+    } else if (aiConsensusRisk === "MEDIUM" || aiDeterminismRisk === "MEDIUM") {
+      if (finalRisk === "LOW") {
+        finalRisk = "MEDIUM";
+        logGL("ANALYZE → AI OVERRIDE", { from: riskLevel, to: "MEDIUM", reason: "on-chain AI rated MEDIUM" });
+      }
+    }
+
+    // When AI overrides the risk, inject AI findings into issues/suggestions
+    // so the user sees WHY the contract is rated higher
+    if (finalRisk !== riskLevel) {
+      // Inject AI reasoning as an issue
+      if (aiAnalysis.reasoning) {
+        finalIssues.push(`🤖 AI: ${aiAnalysis.reasoning}`);
+      }
+      // Inject specific risk flags
+      if (aiConsensusRisk === "HIGH" || aiConsensusRisk === "CRITICAL") {
+        finalIssues.push(`🤖 Consensus Risk: ${aiConsensusRisk} — validators are likely to disagree on this contract's outputs.`);
+      }
+      if (aiDeterminismRisk === "HIGH" || aiDeterminismRisk === "CRITICAL") {
+        finalIssues.push(`🤖 Determinism Risk: ${aiDeterminismRisk} — contract produces non-deterministic results across validator nodes.`);
+      }
+      // Inject AI fix suggestions
+      if (aiAnalysis.fix_suggestions && Array.isArray(aiAnalysis.fix_suggestions)) {
+        for (const sug of aiAnalysis.fix_suggestions) {
+          finalSuggestions.unshift(`🤖 ${sug}`);
+        }
+      }
+    }
+  }
+
+  logGL("ANALYZE → RESULT", { riskLevel: finalRisk, clientRisk: riskLevel, source: execution.source, trustScore: execution.trustScore });
   return {
-    risk_level: riskLevel,
-    issues: report.issueMessages,
-    warnings: report.warningMessages,
-    suggestions: report.suggestions,
+    risk_level: finalRisk,
+    issues: finalIssues,
+    warnings: finalWarnings,
+    suggestions: finalSuggestions,
     ai_analysis: aiAnalysis,
     analysisSource,
     core,
@@ -760,7 +845,7 @@ Rules:
       const evmHash = getLastEvmTxHash();
       if (evmHash) {
         try {
-          const receipt = await pollForReceipt(evmHash);
+          const receipt = await pollForReceipt(evmHash, 30000, network);
           genLayerTxId = extractGenLayerTxId(receipt) || undefined;
           if (!genLayerTxId) {
             throw new Error(`SDK bypass failed: no txId in receipt logs. SDK error: ${writeMsg}`);
@@ -792,6 +877,7 @@ Rules:
         if (onStatusChange) onStatusChange(status, elapsed);
       },
       signal,
+      network,
     );
 
     const durationMs = Date.now() - startTime;

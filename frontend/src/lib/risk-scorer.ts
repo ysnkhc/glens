@@ -1,12 +1,17 @@
 /**
  * GenLayer Contract Risk Scorer — STRICT MODE
  * Assigns risk level (LOW / MEDIUM / HIGH) based on parsed contract analysis.
+ *
+ * FIX: Now uses extractPrompts() from prompt-utils.ts to see inline prompts
+ * inside exec_prompt() calls. Previously only saw long strings (>50 chars)
+ * via parser's extractLongStrings(), missing most real prompts.
  */
 
 import type { ParseResult } from "./parser";
 import type { RulesReport } from "./rules-engine";
+import { extractPrompts, isPromptConstrained } from "./prompt-utils";
 
-export function scoreRisk(parsed: ParseResult, report: RulesReport): "LOW" | "MEDIUM" | "HIGH" {
+export function scoreRisk(parsed: ParseResult, report: RulesReport, sourceCode?: string): "LOW" | "MEDIUM" | "HIGH" {
   const errorCount = report.issues.length;
   const warningCount = report.warnings.length;
 
@@ -45,18 +50,31 @@ export function scoreRisk(parsed: ParseResult, report: RulesReport): "LOW" | "ME
 
   if (hasAI && parsed.usesEqPrinciple && usesCorrectExecPrompt && !hasDangerousImports && errorCount === 0) {
     // Gold standard pattern — BUT check prompt quality before granting LOW
-    const promptStrings = parsed.aiUsages
+    //
+    // FIX: Use extractPrompts() for INLINE prompts inside exec_prompt() calls,
+    // PLUS parsed.aiUsages.preview for long standalone prompt strings.
+    // Previous code only checked parsed.aiUsages.preview (from extractLongStrings >50 chars),
+    // which missed prompts like: gl.nondet.exec_prompt(f"Describe: {text}")
+    const inlinePrompts = sourceCode ? extractPrompts(sourceCode) : [];
+    const previewPrompts = parsed.aiUsages
       .filter(u => u.preview)
       .map(u => u.preview || "");
+    const allPrompts = [...inlinePrompts, ...previewPrompts];
 
     const STRICT_OUTPUT = /\b(ONLY|EXACT|EXACTLY|MUST RETURN|RETURN ONLY|one word|single word|JSON only|valid JSON|GOOD or BAD|YES or NO|TRUE or FALSE|UPPERCASE)\b/i;
     const OPEN_ENDED = /\b(describe|explain|tell me|what do you think|summarize|discuss|analyze in detail|write a paragraph|give your opinion|how would you|random|anything|interesting|creative)\b/i;
 
-    const hasOpenEnded = promptStrings.some(p => OPEN_ENDED.test(p));
-    const hasStrictOutput = promptStrings.length === 0 || promptStrings.some(p => STRICT_OUTPUT.test(p));
+    const hasOpenEnded = allPrompts.some(p => OPEN_ENDED.test(p));
+    const hasStrictOutput = allPrompts.some(p => STRICT_OUTPUT.test(p));
 
     if (hasOpenEnded) return "HIGH";
-    if (!hasStrictOutput && promptStrings.length > 0) return "HIGH";
+
+    // FIX: If we have prompts but none are strict, it's HIGH risk
+    if (allPrompts.length > 0 && !hasStrictOutput) return "HIGH";
+
+    // FIX: If contract has AI but we can't find ANY prompts (dynamic generation),
+    // default to MEDIUM — we can't verify safety without seeing the prompt text
+    if (allPrompts.length === 0) return "MEDIUM";
 
     return "LOW";
   }
