@@ -37,7 +37,11 @@ export function scoreRisk(parsed: ParseResult, report: RulesReport, sourceCode?:
   const hasExternal = parsed.externalCalls.length > 0;
 
   if ((hasAI || hasExternal) && !parsed.usesEqPrinciple) return "HIGH";
-  if (errorCount >= 3) return "HIGH";
+  // Fix #8: Any ERROR-severity issue = broken contract = HIGH risk.
+  // Previously required 3+ errors for HIGH, and 1 error gave MEDIUM.
+  // In GenLayer, a single ERROR (wrong inheritance, decorated constructor,
+  // invalid API) means the contract WILL fail. MEDIUM was misleading.
+  if (errorCount >= 1) return "HIGH";
 
   // --- LOW risk: Gold standard pattern ---
   // AI/external with eq_principle + correct API + no critical issues = LOW
@@ -80,7 +84,6 @@ export function scoreRisk(parsed: ParseResult, report: RulesReport, sourceCode?:
   }
 
   // --- MEDIUM risk conditions ---
-  if (errorCount >= 1) return "MEDIUM";
   if (warningCount >= 3) return "MEDIUM";
 
   const promptUsages = parsed.aiUsages.filter((u) => u.call === "prompt_string");

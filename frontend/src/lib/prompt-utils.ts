@@ -8,6 +8,19 @@
  * Matches exec_prompt() calls with single/double/triple quoted strings.
  */
 export function extractPrompts(code: string): string[] {
+  // Fix #5: Pre-process — replace runtime variable references with [VAR]
+  // so the extracted prompt retains its full structure and constraint keywords
+  // even though it contains dynamic values at runtime.
+  // Example: "Return ONLY the price of " + safe_symbol + " as a number"
+  //       → "Return ONLY the price of [VAR] as a number"
+  let processed = code;
+  // f-string {variable} and {expression} → [VAR]
+  processed = processed.replace(/\{[a-zA-Z_]\w*(?:\([^)]*\))?\}/g, "[VAR]");
+  // String concatenation: " + variable + " → "[VAR]"
+  processed = processed.replace(/["']\s*\+\s*(?:str\()?\s*[a-zA-Z_]\w*\s*(?:\))?\s*\+\s*["']/g, '"[VAR]"');
+  // Trailing concatenation: " + variable)
+  processed = processed.replace(/["']\s*\+\s*(?:str\()?\s*[a-zA-Z_]\w*\s*(?:\))?\s*([)\n])/g, '"[VAR]"$1');
+
   const prompts: string[] = [];
   const patterns = [
     /exec_prompt\s*\(\s*f?"""([\s\S]*?)"""\s*\)/g,
@@ -18,7 +31,7 @@ export function extractPrompts(code: string): string[] {
 
   for (const pat of patterns) {
     let match;
-    while ((match = pat.exec(code)) !== null) {
+    while ((match = pat.exec(processed)) !== null) {
       if (match[1] && match[1].trim().length > 0) {
         prompts.push(match[1].trim());
       }
@@ -29,7 +42,7 @@ export function extractPrompts(code: string): string[] {
   // Matches patterns like exec_prompt(f"part1" "part2" "part3")
   const blockRegex = /exec_prompt\s*\(([\s\S]*?)\)/g;
   let blockMatch;
-  while ((blockMatch = blockRegex.exec(code)) !== null) {
+  while ((blockMatch = blockRegex.exec(processed)) !== null) {
     const block = blockMatch[1];
     const segmentRegex = /f?["']{1,3}([\s\S]*?)["']{1,3}/g;
     let segMatch;

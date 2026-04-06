@@ -353,6 +353,76 @@ function checkIntType(
   }
 }
 
+/**
+ * RULE: Methods missing parameter or return type annotations (Fix #4)
+ */
+function checkMethodAnnotations(
+  parsed: ParseResult,
+  sourceCode: string,
+  report: RulesReport
+): void {
+  if (!parsed.contractClassName) return;
+
+  const lines = sourceCode.split("\n");
+  for (const method of parsed.methods) {
+    if (method.name.startsWith("__") && method.name.endsWith("__")) continue;
+
+    // Missing return type annotation
+    if (!method.hasReturnType) {
+      report.warnings.push({
+        ruleId: "missing_return_type",
+        severity: "WARNING",
+        message: `Method \`${method.name}\` (line ${method.lineNumber}) is missing a return type annotation (e.g., \`-> str\`, \`-> None\`).`,
+        line: method.lineNumber,
+      });
+    }
+
+    // Missing parameter type annotations
+    if (method.lineNumber > 0 && method.lineNumber <= lines.length) {
+      const defLine = lines[method.lineNumber - 1];
+      const paramsMatch = defLine.match(/def\s+\w+\s*\(([^)]*)\)/);
+      if (paramsMatch) {
+        const params = paramsMatch[1]
+          .split(",")
+          .map(p => p.trim())
+          .filter(p => p && p !== "self");
+        for (const param of params) {
+          if (!param.includes(":")) {
+            const paramName = param.split("=")[0].trim();
+            if (paramName) {
+              report.warnings.push({
+                ruleId: "missing_param_type",
+                severity: "WARNING",
+                message: `Parameter \`${paramName}\` in method \`${method.name}\` (line ${method.lineNumber}) is missing a type annotation (e.g., \`${paramName}: str\`).`,
+                line: method.lineNumber,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * RULE: Missing # { "Depends": "py-genlayer:<hash>" } header (Fix #6)
+ * Required for Bradbury testnet deployment.
+ */
+function checkDependsHeader(
+  sourceCode: string,
+  report: RulesReport
+): void {
+  const headerPattern = /^#\s*\{\s*"Depends"\s*:\s*"py-genlayer:[^"]+"\s*\}/m;
+  if (!headerPattern.test(sourceCode)) {
+    report.warnings.push({
+      ruleId: "missing_depends_header",
+      severity: "WARNING",
+      message: 'Missing `# { "Depends": "py-genlayer:<hash>" }` header. Required for Bradbury testnet deployment.',
+      line: 1,
+    });
+  }
+}
+
 function generateSuggestions(
   parsed: ParseResult,
   report: RulesReport
@@ -410,11 +480,7 @@ function generateSuggestions(
         "Declare class-level typed attributes (e.g., `data: str`, `count: u256`) for persistent state."
     );
   }
-
-  // Missing Depends header
-  report.suggestions.push(
-    "Ensure your contract has the correct `# { \"Depends\": \"py-genlayer:<hash>\" }` header for Bradbury testnet."
-  );
+  // Fix #6: Removed always-on generic Depends suggestion — now handled by checkDependsHeader rule
 }
 
 // ─── Main Entry Point ──────────────────────────────────────────
@@ -441,8 +507,9 @@ export function runRules(parsed: ParseResult, sourceCode?: string): RulesReport 
   }
 
   // Core structural rules
-  checkContractClass(parsed, report);
+  // Fix #3: Run checkInheritance FIRST so wrong_inheritance fires before no_contract_class
   checkInheritance(parsed, report);
+  checkContractClass(parsed, report);
   checkDecorators(parsed, report);
   checkConstructor(parsed, report);
   checkStateVariables(parsed, report);
@@ -450,6 +517,8 @@ export function runRules(parsed: ParseResult, sourceCode?: string): RulesReport 
 
   // NEW: Strict GenLayer rules (source-level analysis)
   if (sourceCode) {
+    checkMethodAnnotations(parsed, sourceCode, report); // Fix #4
+    checkDependsHeader(sourceCode, report); // Fix #6
     checkIncorrectExecPrompt(sourceCode, report);
     checkDangerousExternalCalls(sourceCode, report);
     checkMissingEqPrinciple(sourceCode, parsed, report);

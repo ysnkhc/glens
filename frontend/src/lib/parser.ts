@@ -186,12 +186,15 @@ export function parseContract(sourceCode: string): ParseResult {
         (b) => b === "gl.Contract" || b === "Contract"
       );
 
-      // FIX: Only assign as contract class if it inherits from gl.Contract
-      if (isContract) {
+      // Fix #3: Always capture the first class — rules engine validates inheritance.
+      // Previously only captured gl.Contract subclasses, so VotingContract(dict)
+      // triggered 'no_contract_class' instead of 'wrong_inheritance'.
+      if (!result.contractClassName) {
         result.contractClassName = className;
         result.baseClasses = bases;
         extractClassBody(lines, i, result);
-        break; // Use the first gl.Contract class found
+        if (isContract) break; // Found the real contract, stop searching
+        // Otherwise keep looking — a later class might inherit gl.Contract
       }
     }
   }
@@ -443,5 +446,13 @@ export function buildMetadata(parsed: ParseResult): string {
   if (parsed.aiUsages.length > 0) parts.push(`AI calls: ${parsed.aiUsages.length}`);
   if (parsed.externalCalls.length > 0) parts.push(`External calls: ${parsed.externalCalls.length}`);
   parts.push(`Uses eq_principle: ${parsed.usesEqPrinciple ? "yes" : "no"}`);
+  // Fix #2: Include prompt previews so on-chain AI can assess constraint quality
+  const promptPreviews = parsed.aiUsages
+    .filter(u => u.preview)
+    .map(u => u.preview!)
+    .slice(0, 2);
+  if (promptPreviews.length > 0) {
+    parts.push(`Prompts: ${promptPreviews.join(" | ")}`);
+  }
   return parts.join(". ");
 }

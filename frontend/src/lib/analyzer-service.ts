@@ -22,7 +22,7 @@ import type { AnalysisCore } from "./analysis-core";
 import type { ParseResult } from "./parser";
 import type { RulesReport } from "./rules-engine";
 import { TransactionStatus } from "genlayer-js/types";
-import { logGL, inspectPayload, createTxTimer, detectConsensusFailure, showRawResult } from "./genlayer-debug";
+import { logGL, inspectPayload, createTxTimer, detectConsensusFailure, showRawResult, clearDebugLogs } from "./genlayer-debug";
 import {
   validateArgs,
   truncatePayload,
@@ -432,6 +432,7 @@ function ruleBasedFix(code: string): FixResult {
  * Analyze a GenLayer contract.
  */
 export async function analyzeContract(code: string, walletAddress?: string | null, network: NetworkType = "studio"): Promise<AnalysisResult> {
+  clearDebugLogs(); // Fix #10: Start fresh log session for each new analysis
   logGL("ANALYZE → CLIENT START", { codeLength: code.length, walletAddress: walletAddress?.slice(0, 10) + "..." });
   const parsed = parseContract(code);
   const report = runRules(parsed, code);
@@ -446,7 +447,7 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
     try {
       const client = await createWriteClient(walletAddress!, network);
       const summary = buildMetadata(parsed);
-      const safeSummary = summary.slice(0, 200);
+      const safeSummary = summary.slice(0, 400); // Fix #2: Expanded from 200 to fit prompt snippets
 
       const timer = createTxTimer("analyze_contract");
 
@@ -660,14 +661,18 @@ export async function explainContract(code: string, walletAddress?: string | nul
     console.log("TX HASH:", txHash);
     logGL("EXPLAIN → TX SENT", { txHash });
 
-    const receipt = await client.waitForTransactionReceipt({
-      hash: txHash,
-      status: TransactionStatus.ACCEPTED,
-    });
+    // Fix #7: Use pollConsensusStatus — SDK's waitForTransactionReceipt misses FINALIZED
+    const explainPollResult = await pollConsensusStatus(
+      String(txHash),
+      client,
+      undefined,
+      undefined,
+      network,
+    );
 
-    // 🔴 AUDIT LOG: After receipt
-    console.log("RECEIPT:", receipt);
-    await new Promise(resolve => setTimeout(resolve, 1200));
+    if (explainPollResult.consensus !== "AGREED") {
+      throw new Error(`Explain did not reach consensus (${explainPollResult.consensus}).`);
+    }
     logGL("EXPLAIN → TX ACCEPTED", { txHash });
 
     const readFn = getReadMethod("explain_contract");
@@ -797,16 +802,11 @@ export async function simulateConsensus(
     };
   }
 
-  // ─── Task 2: Force deterministic output — validators MUST agree ──
-  const normalizedPrompt = `Respond with a single word only.
-Your response must be EXACTLY: YES
-Rules:
-- Return ONLY the word YES in uppercase
-- No punctuation
-- No explanation
-- No spaces before or after`;
-
-  logGL("SIMULATE → TX START", { method: "simulate_consensus", promptLength: normalizedPrompt.length, originalLength: safePrompt.length });
+  // Fix #1 (CRITICAL): Send the REAL prompt to validators — not a hardcoded "say YES".
+  // The non-deterministic pre-filter above already blocks obviously bad prompts.
+  // Constrained prompts (YES/NO, single word, decimal number) will AGREE.
+  // Open-ended prompts will DISAGREE — which is the correct, honest result.
+  logGL("SIMULATE → TX START", { method: "simulate_consensus", promptLength: safePrompt.length });
 
 
 
@@ -827,7 +827,7 @@ Rules:
         client.writeContract({
           address: CONTRACT_ADDRESS[network] as `0x${string}`,
           functionName: "simulate_consensus",
-          args: [normalizedPrompt],
+          args: [safePrompt],
           value: 0n,
           validUntil,
         })
@@ -902,6 +902,10 @@ Rules:
           args: [],
         });
         rawVerdict = String(resultStr).trim();
+        // Fix #9: Fall back to resultName when read returns empty
+        if (!rawVerdict && consensusResult.resultName) {
+          rawVerdict = consensusResult.resultName;
+        }
         showRawResult(rawVerdict, "SIMULATE");
       } catch (readErr) {
         console.warn("Read after consensus failed:", readErr);
@@ -1275,14 +1279,18 @@ export async function fixContract(code: string, walletAddress?: string | null, n
       console.log("TX HASH:", txHash);
       logGL("FIX → TX SENT", { txHash });
 
-      const fixReceipt = await client.waitForTransactionReceipt({
-        hash: txHash,
-        status: TransactionStatus.ACCEPTED,
-      });
+      // Fix #7: Use pollConsensusStatus — SDK's waitForTransactionReceipt misses FINALIZED
+      const fixPollResult = await pollConsensusStatus(
+        String(txHash),
+        client,
+        undefined,
+        undefined,
+        network,
+      );
 
-      // 🔴 AUDIT LOG: After receipt
-      console.log("RECEIPT:", fixReceipt);
-      await new Promise(resolve => setTimeout(resolve, 1200));
+      if (fixPollResult.consensus !== "AGREED") {
+        throw new Error(`Fix did not reach consensus (${fixPollResult.consensus}).`);
+      }
       logGL("FIX → TX ACCEPTED", { txHash });
 
       const readFn = getReadMethod("fix_contract");
