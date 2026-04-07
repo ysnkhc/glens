@@ -1,14 +1,10 @@
 /**
- * GenLayer Analyzer Service — PRODUCTION STRICT MODE
+ * GenLayer Analyzer Service — v2 ON-CHAIN FIRST
  *
- * Hybrid architecture:
- * - Deterministic analysis (parser, rules, risk) → client-side (instant, free)
- * - AI analysis (analyze, explain, simulate, fix) → on-chain via GenLayer contract
- *
- * STRICT RULES:
- * - NEVER use gl.exec_prompt → must use gl.nondet.exec_prompt
- * - ALWAYS wrap AI calls in gl.eq_principle
- * - NEVER use requests.get → must use gl.nondet.web
+ * Architecture (per GenLayer builder guidelines):
+ * - ALL analysis (bug detection, risk scoring, prompt assessment) → ON-CHAIN via exec_prompt
+ * - Frontend = thin UI layer that sends full source code and displays on-chain results
+ * - Client-side fallback only used when no wallet is connected
  */
 
 import { CONTRACT_ADDRESS, createWriteClient, getLastEvmTxHash, pollForReceipt, extractGenLayerTxId, pollConsensusStatus } from "./genlayer";
@@ -432,30 +428,19 @@ function ruleBasedFix(code: string): FixResult {
  * Analyze a GenLayer contract.
  */
 export async function analyzeContract(code: string, walletAddress?: string | null, network: NetworkType = "studio"): Promise<AnalysisResult> {
-  clearDebugLogs(); // Fix #10: Start fresh log session for each new analysis
-  logGL("ANALYZE → CLIENT START", { codeLength: code.length, walletAddress: walletAddress?.slice(0, 10) + "..." });
-  const parsed = parseContract(code);
-  const report = runRules(parsed, code);
-  const riskLevel = scoreRisk(parsed, report, code);
-  const core = computeAnalysisCore(parsed);
-  logGL("ANALYZE → CLIENT DONE", { riskLevel, issues: report.issues.length, warnings: report.warnings.length, core });
+  clearDebugLogs();
+  logGL("ANALYZE → START", { codeLength: code.length, walletAddress: walletAddress?.slice(0, 10) + "..." });
 
-  let aiAnalysis: AIAnalysis;
-  let execution: ExecutionMeta;
-
+  // ─── v2: On-chain first — send FULL source code to GenLayer AI ───
   if (isContractReady(walletAddress, network)) {
     try {
       const client = await createWriteClient(walletAddress!, network);
-      const summary = buildMetadata(parsed);
-      const safeSummary = summary.slice(0, 400); // Fix #2: Expanded from 200 to fit prompt snippets
-
       const timer = createTxTimer("analyze_contract");
 
-      logGL("ANALYZE → TX START", { method: "analyze_contract", payloadLength: safeSummary.length });
+      // v2: Send full source code (up to 4KB) — the on-chain AI does ALL analysis
+      const safeCode = code.slice(0, 4000);
+      logGL("ANALYZE → TX START", { method: "analyze_contract", payloadLength: safeCode.length });
 
-
-
-      // Hoist genLayerTxId so catch block can access it
       let genLayerTxId: string | undefined;
 
       try {
@@ -463,19 +448,16 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
           client.writeContract({
             address: CONTRACT_ADDRESS[network] as `0x${string}`,
             functionName: "analyze_contract",
-            args: [safeSummary],
+            args: [safeCode],
             value: 0n,
           })
         );
         genLayerTxId = String(txHash);
       } catch (writeErr) {
-        // ─── GUARD: User rejected → surface immediately ───
         if (isUserRejection(writeErr)) {
           throw new Error("Transaction cancelled. Please approve the wallet popup to continue.");
         }
         const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
-
-        // ─── SDK BYPASS: Recover txId from EVM receipt ─────────
         const evmHash = getLastEvmTxHash();
         if (evmHash) {
           try {
@@ -484,7 +466,7 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
             if (!genLayerTxId) {
               throw new Error(`SDK bypass failed: no txId in receipt logs. SDK error: ${writeMsg}`);
             }
-          } catch (receiptErr) {
+          } catch {
             throw new Error(`writeContract failed and recovery failed: ${writeMsg}`);
           }
         } else {
@@ -492,26 +474,19 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
         }
       }
 
-      // ✅ GUARD: Validate we have a GenLayer txId
       if (!genLayerTxId || genLayerTxId === "" || genLayerTxId === "0x") {
         throw new Error(`No valid GenLayer txId: "${genLayerTxId}"`);
       }
 
-      // 🔴 AUDIT LOG: After txHash
       console.log("TX HASH:", genLayerTxId);
       logGL("ANALYZE → TX SENT", { genLayerTxId });
 
-      // ─── Poll for consensus (same engine as simulate) ──────────────────
       const analyzePollResult = await pollConsensusStatus(
-        genLayerTxId,
-        client,
-        undefined, // no UI progress needed for analyze
-        undefined, // no abort signal
-        network,
+        genLayerTxId, client, undefined, undefined, network,
       );
 
       if (analyzePollResult.consensus !== "AGREED") {
-        throw new Error(`On-chain analysis did not reach consensus (${analyzePollResult.consensus}). Using client fallback.`);
+        throw new Error(`On-chain analysis did not reach consensus (${analyzePollResult.consensus}).`);
       }
 
       const readFn = getReadMethod("analyze_contract");
@@ -521,21 +496,55 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
         args: [],
       });
       logGL(`ANALYZE → READ ${readFn}`, { rawLength: String(resultStr).length });
-
       timer.stop();
       showRawResult(String(resultStr), "ANALYZE");
+
+      // ─── v2: Parse comprehensive on-chain result ───
+      let onchainResult: Record<string, unknown>;
       let validationOk = true;
       try {
-        aiAnalysis = safeParseStrict(String(resultStr), "analyze_contract") as AIAnalysis;
-        validationOk = validateAnalysisOutput(aiAnalysis);
+        onchainResult = safeParseStrict(String(resultStr), "analyze_contract") as Record<string, unknown>;
+        validationOk = validateAnalysisOutput(onchainResult as AIAnalysis);
       } catch {
         logGL("ANALYZE → STRICT PARSE FAILED, using lenient", {});
-        aiAnalysis = safeParseJSON(String(resultStr));
+        onchainResult = safeParseJSON(String(resultStr));
         validationOk = false;
       }
-      execution = { ...computeTrust("ONCHAIN_CONFIRMED", validationOk), txHash: genLayerTxId };
+
+      // ─── v2: Map on-chain JSON → AnalysisResult ───
+      // The on-chain AI is the SOLE authority for risk, issues, warnings
+      const riskLevel = mapRiskLevel(String(onchainResult.risk_level || "MEDIUM"));
+      const issues = extractIssueMessages(onchainResult.issues);
+      const warnings = extractIssueMessages(onchainResult.warnings);
+      const suggestions = Array.isArray(onchainResult.fix_suggestions)
+        ? (onchainResult.fix_suggestions as string[]).map(s => `🤖 ${s}`)
+        : [];
+
+      const aiAnalysis: AIAnalysis = {
+        prompt_quality: String(onchainResult.prompt_quality || "N/A"),
+        determinism_risk: String(onchainResult.determinism_risk || "MEDIUM"),
+        consensus_risk: String(onchainResult.consensus_risk || "MEDIUM"),
+        reasoning: String(onchainResult.reasoning || ""),
+        fix_suggestions: Array.isArray(onchainResult.fix_suggestions) ? onchainResult.fix_suggestions as string[] : [],
+      };
+
+      // Minimal core — on-chain AI is the authority, not client-side detection
+      const parsed = parseContract(code);
+      const core = computeAnalysisCore(parsed);
+      const execution = { ...computeTrust("ONCHAIN_CONFIRMED", validationOk), txHash: genLayerTxId };
+
+      logGL("ANALYZE → RESULT", { riskLevel, source: "ONCHAIN_CONFIRMED", issues: issues.length, warnings: warnings.length });
+      return {
+        risk_level: riskLevel,
+        issues,
+        warnings,
+        suggestions,
+        ai_analysis: aiAnalysis,
+        analysisSource: "ai_onchain",
+        core,
+        execution,
+      };
     } catch (err) {
-      // ─── GUARD: User rejected → DO NOT fallback, surface the error ───
       if (isUserRejection(err)) {
         logGL("ANALYZE → USER REJECTED TX", {});
         throw new Error("Transaction cancelled. Please approve the wallet popup to continue.");
@@ -543,82 +552,52 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
       const failure = detectConsensusFailure(err);
       logGL("ANALYZE → TX ERROR", { error: err instanceof Error ? err.message : err, failure });
       console.warn("On-chain analysis failed, using client-side fallback:", err);
-      aiAnalysis = deriveHeuristicAnalysis(code, parsed, core, report);
-      execution = computeTrust("CLIENT_FALLBACK");
-      logGL("ANALYZE → FALLBACK to client-side", { method: "deriveAIAnalysis", source: execution.source });
-    }
-  } else {
-    logGL("ANALYZE → CLIENT-ONLY (no wallet/contract)", { walletAddress });
-    aiAnalysis = deriveHeuristicAnalysis(code, parsed, core, report);
-    execution = computeTrust("CLIENT_FALLBACK");
-  }
-
-  const analysisSource: AnalysisSource = execution.source === "ONCHAIN_CONFIRMED" ? "ai_onchain" : "heuristic_client";
-
-  // ─── FIX: On-chain AI override ─────────────────────────────────
-  // When the on-chain AI (validated by GenLayer consensus) reports HIGH risk
-  // but the client-side scorer says LOW, trust the on-chain result.
-  // The on-chain AI sees the FULL contract context; the client scorer only
-  // sees structural patterns and may miss dynamic/runtime risks.
-  let finalRisk = riskLevel;
-  const finalIssues = [...report.issueMessages];
-  const finalWarnings = [...report.warningMessages];
-  const finalSuggestions = [...report.suggestions];
-
-  if (analysisSource === "ai_onchain" && aiAnalysis) {
-    const aiConsensusRisk = String(aiAnalysis.consensus_risk || "").toUpperCase();
-    const aiDeterminismRisk = String(aiAnalysis.determinism_risk || "").toUpperCase();
-
-    // AI says HIGH/CRITICAL → upgrade from LOW to at least MEDIUM, or to HIGH
-    if (aiConsensusRisk === "CRITICAL" || aiDeterminismRisk === "CRITICAL") {
-      finalRisk = "HIGH";
-      logGL("ANALYZE → AI OVERRIDE", { from: riskLevel, to: "HIGH", reason: "on-chain AI rated CRITICAL" });
-    } else if (aiConsensusRisk === "HIGH" || aiDeterminismRisk === "HIGH") {
-      if (finalRisk === "LOW") {
-        finalRisk = "HIGH";
-        logGL("ANALYZE → AI OVERRIDE", { from: riskLevel, to: "HIGH", reason: "on-chain AI rated HIGH" });
-      }
-    } else if (aiConsensusRisk === "MEDIUM" || aiDeterminismRisk === "MEDIUM") {
-      if (finalRisk === "LOW") {
-        finalRisk = "MEDIUM";
-        logGL("ANALYZE → AI OVERRIDE", { from: riskLevel, to: "MEDIUM", reason: "on-chain AI rated MEDIUM" });
-      }
-    }
-
-    // When AI overrides the risk, inject AI findings into issues/suggestions
-    // so the user sees WHY the contract is rated higher
-    if (finalRisk !== riskLevel) {
-      // Inject AI reasoning as an issue
-      if (aiAnalysis.reasoning) {
-        finalIssues.push(`🤖 AI: ${aiAnalysis.reasoning}`);
-      }
-      // Inject specific risk flags
-      if (aiConsensusRisk === "HIGH" || aiConsensusRisk === "CRITICAL") {
-        finalIssues.push(`🤖 Consensus Risk: ${aiConsensusRisk} — validators are likely to disagree on this contract's outputs.`);
-      }
-      if (aiDeterminismRisk === "HIGH" || aiDeterminismRisk === "CRITICAL") {
-        finalIssues.push(`🤖 Determinism Risk: ${aiDeterminismRisk} — contract produces non-deterministic results across validator nodes.`);
-      }
-      // Inject AI fix suggestions
-      if (aiAnalysis.fix_suggestions && Array.isArray(aiAnalysis.fix_suggestions)) {
-        for (const sug of aiAnalysis.fix_suggestions) {
-          finalSuggestions.unshift(`🤖 ${sug}`);
-        }
-      }
+      // Fall through to client fallback below
     }
   }
 
-  logGL("ANALYZE → RESULT", { riskLevel: finalRisk, clientRisk: riskLevel, source: execution.source, trustScore: execution.trustScore });
+  // ─── Fallback: Client-only (no wallet connected or on-chain failed) ───
+  logGL("ANALYZE → CLIENT FALLBACK", { walletAddress });
+  const parsed = parseContract(code);
+  const report = runRules(parsed, code);
+  const riskLevel = scoreRisk(parsed, report, code);
+  const core = computeAnalysisCore(parsed);
+  const aiAnalysis = deriveHeuristicAnalysis(code, parsed, core, report);
+  const execution = computeTrust("CLIENT_FALLBACK");
+
   return {
-    risk_level: finalRisk,
-    issues: finalIssues,
-    warnings: finalWarnings,
-    suggestions: finalSuggestions,
+    risk_level: riskLevel,
+    issues: [...report.issueMessages],
+    warnings: [...report.warningMessages],
+    suggestions: [...report.suggestions],
     ai_analysis: aiAnalysis,
-    analysisSource,
+    analysisSource: "heuristic_client",
     core,
     execution,
   };
+}
+
+/** Map on-chain risk string to typed risk level */
+function mapRiskLevel(raw: string): "LOW" | "MEDIUM" | "HIGH" {
+  const upper = raw.toUpperCase().trim();
+  if (upper === "LOW") return "LOW";
+  if (upper === "HIGH" || upper === "CRITICAL") return "HIGH";
+  return "MEDIUM";
+}
+
+/** Extract human-readable messages from on-chain issues/warnings array */
+function extractIssueMessages(arr: unknown): string[] {
+  if (!Array.isArray(arr)) return [];
+  return arr.map((item: unknown) => {
+    if (typeof item === "string") return item;
+    if (item && typeof item === "object") {
+      const obj = item as Record<string, unknown>;
+      const line = obj.line ? `Line ${obj.line}: ` : "";
+      const severity = obj.severity === "ERROR" ? "❌" : "⚠️";
+      return `${line}${severity} ${obj.message || obj.rule || "Unknown issue"}`;
+    }
+    return String(item);
+  });
 }
 
 /**
@@ -632,27 +611,17 @@ export async function explainContract(code: string, walletAddress?: string | nul
 
   try {
     const client = await createWriteClient(walletAddress!, network);
-    const parsed = parseContract(code);
-    const summary = buildMetadata(parsed);
-    const safeSummary = summary.slice(0, 200);
+    // v2: Send full source code — the on-chain AI explains the contract
+    const safeCode = code.slice(0, 4000);
 
     const timer = createTxTimer("explain_contract");
-    console.log("DEBUG_ARGS explain_contract:", safeSummary);
-    logGL("EXPLAIN → TX START", { method: "explain_contract", payloadLength: safeSummary.length });
-
-    // 🔴 AUDIT LOG: Before writeContract
-    console.log("CALLING writeContract:", {
-      functionName: "explain_contract",
-      args: [safeSummary],
-      contractAddress: CONTRACT_ADDRESS[network],
-      note: "SDK routes this through GenLayer Router (0x0112Bf6e...), NOT directly to contract"
-    });
+    logGL("EXPLAIN → TX START", { method: "explain_contract", payloadLength: safeCode.length });
 
     const txHash = await sendSerialTransaction(() =>
       client.writeContract({
         address: CONTRACT_ADDRESS[network] as `0x${string}`,
         functionName: "explain_contract",
-        args: [safeSummary],
+        args: [safeCode],
         value: 0n,
       })
     );
@@ -1252,25 +1221,17 @@ export async function fixContract(code: string, walletAddress?: string | null, n
   if (isContractReady(walletAddress, network)) {
     try {
       const client = await createWriteClient(walletAddress!, network);
-      const safeIssues = allIssues.map((i) => `- ${i}`).join("\n").slice(0, 200);
+      // v2: Send full source code — the on-chain AI analyzes and fixes
+      const safeCode = code.slice(0, 4000);
 
       const timer = createTxTimer("fix_contract");
-      console.log("DEBUG_ARGS fix_contract:", safeIssues);
-      logGL("FIX → TX START", { method: "fix_contract", payloadLength: safeIssues.length });
-
-      // 🔴 AUDIT LOG: Before writeContract
-      console.log("CALLING writeContract:", {
-        functionName: "fix_contract",
-        args: [safeIssues],
-        contractAddress: CONTRACT_ADDRESS[network],
-        note: "SDK routes this through GenLayer Router (0x0112Bf6e...), NOT directly to contract"
-      });
+      logGL("FIX → TX START", { method: "fix_contract", payloadLength: safeCode.length });
 
       const txHash = await sendSerialTransaction(() =>
         client.writeContract({
           address: CONTRACT_ADDRESS[network] as `0x${string}`,
           functionName: "fix_contract",
-          args: [safeIssues],
+          args: [safeCode],
           value: 0n,
         })
       );
