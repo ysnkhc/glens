@@ -197,7 +197,7 @@ export async function pollConsensusStatus(
   network: NetworkType = "studio",
 ): Promise<ConsensusResult> {
   const pollInterval = network === "bradbury" ? 10000 : 30000;
-  const maxTimeout = network === "bradbury" ? 5 * 60 * 1000 : 10 * 60 * 1000; // 5min / 10min
+  const maxTimeout = network === "bradbury" ? 15 * 60 * 1000 : 10 * 60 * 1000; // 15min Bradbury / 10min Studio
   const start = Date.now();
   let lastStatus = "";
   let pollCount = 0;
