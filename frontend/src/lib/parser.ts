@@ -83,7 +83,7 @@ const DANGEROUS_EXTERNAL_PATTERNS = [
   "http.client",
   "httpx",
   "aiohttp",
-  "fetch",
+  "fetch(",
 ];
 
 /** Correct GenLayer external call patterns */

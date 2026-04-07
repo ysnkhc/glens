@@ -16,10 +16,13 @@ export function extractPrompts(code: string): string[] {
   let processed = code;
   // f-string {variable} and {expression} → [VAR]
   processed = processed.replace(/\{[a-zA-Z_]\w*(?:\([^)]*\))?\}/g, "[VAR]");
-  // String concatenation: " + variable + " → "[VAR]"
-  processed = processed.replace(/["']\s*\+\s*(?:str\()?\s*[a-zA-Z_]\w*\s*(?:\))?\s*\+\s*["']/g, '"[VAR]"');
-  // Trailing concatenation: " + variable)
-  processed = processed.replace(/["']\s*\+\s*(?:str\()?\s*[a-zA-Z_]\w*\s*(?:\))?\s*([)\n])/g, '"[VAR]"$1');
+  // Middle string concatenation: "text" + variable + "text" → "text [VAR] text"
+  // We consume the boundary quotes so the two halves merge into one string
+  processed = processed.replace(/["']\s*\+\s*(?:str\()?\s*[a-zA-Z_]\w*\s*(?:\))?\s*\+\s*["']/g, " [VAR] ");
+  // Trailing concatenation: "text" + variable) → "text [VAR]")
+  processed = processed.replace(/["']\s*\+\s*(?:str\()?\s*[a-zA-Z_]\w*\s*(?:\))?\s*([)\n])/g, ' [VAR]"$1');
+  // Leading concatenation: (variable + "text" → ("[VAR] text"
+  processed = processed.replace(/([(\s,])(?:str\()?\s*[a-zA-Z_]\w*\s*(?:\))?\s*\+\s*["']/g, '$1"[VAR] ');
 
   const prompts: string[] = [];
   const patterns = [

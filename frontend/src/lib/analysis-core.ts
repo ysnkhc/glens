@@ -36,7 +36,7 @@ const DANGEROUS_EXTERNALS = new Set([
   "http.client",
   "httpx",
   "aiohttp",
-  "fetch",
+  "fetch(",
 ]);
 
 /**
