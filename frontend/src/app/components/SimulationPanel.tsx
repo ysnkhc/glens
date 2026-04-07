@@ -228,7 +228,10 @@ export default function SimulationPanel({ result, isLoading, onSimulate, network
                         {v.output || "(empty)"}
                       </div>
                     </div>
-                    <div className="flex-shrink-0 text-[9px]" style={{ color: "var(--text-faint)" }}>{v.style}</div>
+                    <div className="flex-shrink-0 text-right">
+                      <div className="text-[9px]" style={{ color: "var(--text-faint)" }}>{v.style}</div>
+                      {v.reason && <div className="text-[9px] font-mono" style={{ color: isMatch ? "#4ade80" : "#f97316" }}>{v.reason}</div>}
+                    </div>
                   </div>
                 );
               })}
