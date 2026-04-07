@@ -671,6 +671,141 @@ export async function explainContract(code: string, walletAddress?: string | nul
   }
 }
 
+// ─── Validator Output Extraction ──────────────────────────────────
+// Extract real validator outputs from GenLayer transaction data.
+// The eq_blocks_outputs field contains each validator's exec_prompt result.
+
+type ValidatorEntry = {
+  id: string;
+  name: string;
+  style: string;
+  output: string;
+  temperature: number;
+  reason?: string;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractValidatorOutputs(txData: any): ValidatorEntry[] {
+  if (!txData) return [];
+
+  const validators: ValidatorEntry[] = [];
+
+  try {
+    // ─── Source 1: eq_blocks_outputs ───
+    // Contains the outputs from each validator's eq_principle execution
+    const eqOutputs = txData.eq_blocks_outputs || txData.eqBlocksOutputs;
+    if (eqOutputs && typeof eqOutputs === "object") {
+      logGL("SIMULATE → RAW eq_blocks_outputs", { type: typeof eqOutputs, isArray: Array.isArray(eqOutputs), keys: Object.keys(eqOutputs).slice(0, 10) });
+
+      // Handle array format: [{output: "...", ...}, ...]
+      if (Array.isArray(eqOutputs)) {
+        for (let i = 0; i < eqOutputs.length; i++) {
+          const entry = eqOutputs[i];
+          if (entry && typeof entry === "object") {
+            // Each entry might have: output, result, vote, leader, validator_address, etc.
+            const output = String(entry.output || entry.result || entry.vote || entry.value || JSON.stringify(entry));
+            validators.push({
+              id: entry.validator_address || entry.address || `validator-${i + 1}`,
+              name: entry.validator_address ? `${String(entry.validator_address).slice(0, 6)}...${String(entry.validator_address).slice(-4)}` : `Validator ${i + 1}`,
+              style: entry.model || entry.llm_model || "GenLayer LLM",
+              output: output.slice(0, 200),
+              temperature: entry.temperature ?? 0.7,
+              reason: entry.reason || undefined,
+            });
+          } else if (typeof entry === "string") {
+            validators.push({
+              id: `validator-${i + 1}`,
+              name: `Validator ${i + 1}`,
+              style: "GenLayer LLM",
+              output: entry.slice(0, 200),
+              temperature: 0.7,
+            });
+          }
+        }
+      }
+      // Handle object format: { "0": {...}, "1": {...} } or { "block_0": [...] }
+      else {
+        const keys = Object.keys(eqOutputs);
+        for (let i = 0; i < keys.length; i++) {
+          const val = eqOutputs[keys[i]];
+          if (Array.isArray(val)) {
+            // Nested arrays: each block might have sub-outputs
+            for (let j = 0; j < val.length; j++) {
+              const subVal = val[j];
+              const output = typeof subVal === "string" ? subVal : String(subVal?.output || subVal?.result || JSON.stringify(subVal));
+              validators.push({
+                id: `validator-${validators.length + 1}`,
+                name: `Validator ${validators.length + 1}`,
+                style: "GenLayer LLM",
+                output: output.slice(0, 200),
+                temperature: 0.7,
+              });
+            }
+          } else if (typeof val === "string") {
+            validators.push({
+              id: `validator-${i + 1}`,
+              name: `Validator ${i + 1}`,
+              style: "GenLayer LLM",
+              output: val.slice(0, 200),
+              temperature: 0.7,
+            });
+          }
+        }
+      }
+    }
+
+    // ─── Source 2: consensus_data ───
+    // May contain vote records with validator outputs
+    const consensusData = txData.consensus_data || txData.consensusData;
+    if (validators.length === 0 && consensusData) {
+      logGL("SIMULATE → RAW consensus_data", { type: typeof consensusData, keys: typeof consensusData === "object" ? Object.keys(consensusData).slice(0, 10) : [] });
+
+      if (typeof consensusData === "object" && !Array.isArray(consensusData)) {
+        const votes = consensusData.votes || consensusData.validators || [];
+        if (Array.isArray(votes)) {
+          for (let i = 0; i < votes.length; i++) {
+            const vote = votes[i];
+            validators.push({
+              id: vote.address || vote.validator || `validator-${i + 1}`,
+              name: vote.address ? `${String(vote.address).slice(0, 6)}...${String(vote.address).slice(-4)}` : `Validator ${i + 1}`,
+              style: vote.model || "GenLayer LLM",
+              output: String(vote.output || vote.result || vote.vote || ""),
+              temperature: vote.temperature ?? 0.7,
+            });
+          }
+        }
+      }
+    }
+
+    // ─── Source 3: messages field ───
+    const messages = txData.messages;
+    if (validators.length === 0 && Array.isArray(messages) && messages.length > 0) {
+      logGL("SIMULATE → RAW messages", { count: messages.length, sample: messages.slice(0, 2) });
+    }
+
+    if (validators.length > 0) {
+      logGL("SIMULATE → VALIDATORS EXTRACTED", { count: validators.length, outputs: validators.map(v => v.output.slice(0, 50)) });
+    } else {
+      logGL("SIMULATE → NO VALIDATOR DATA FOUND", { availableKeys: Object.keys(txData).filter(k => txData[k] !== null && txData[k] !== "" && txData[k] !== undefined).slice(0, 15) });
+    }
+  } catch (err) {
+    console.warn("Failed to extract validator outputs:", err);
+  }
+
+  return validators;
+}
+
+function computeAgreementRate(validators: ValidatorEntry[]): number {
+  if (validators.length === 0) return 0;
+  const outputs = validators.map(v => v.output.trim().toUpperCase());
+  const counts: Record<string, number> = {};
+  for (const o of outputs) {
+    counts[o] = (counts[o] || 0) + 1;
+  }
+  const maxCount = Math.max(...Object.values(counts));
+  return maxCount / validators.length;
+}
+
 /**
  * Simulate consensus — Single TX, Real Consensus, Real Intelligence.
  *
@@ -860,6 +995,9 @@ export async function simulateConsensus(
       durationMs,
     });
 
+    // ─── v2: Extract real validator data from on-chain transaction ───
+    const realValidators = extractValidatorOutputs(consensusResult.data);
+
     if (consensusResult.consensus === "AGREED") {
       // Read the actual result from the contract
       let rawVerdict = "";
@@ -882,10 +1020,10 @@ export async function simulateConsensus(
       }
 
       return {
-        validators: [],
+        validators: realValidators,
         consensus: "AGREED",
         confidence: 1.0,
-        agreement_rate: 1.0,
+        agreement_rate: realValidators.length > 0 ? 1.0 : 1.0,
         risk: "LOW",
         prompts_found: prompts.length,
         simulated_prompt: safePrompt.slice(0, 200),
@@ -901,10 +1039,10 @@ export async function simulateConsensus(
 
     if (consensusResult.consensus === "DISAGREED") {
       return {
-        validators: [],
+        validators: realValidators,
         consensus: "DISAGREED",
         confidence: 0,
-        agreement_rate: 0,
+        agreement_rate: realValidators.length > 0 ? computeAgreementRate(realValidators) : 0,
         risk: "HIGH",
         prompts_found: prompts.length,
         simulated_prompt: safePrompt.slice(0, 200),

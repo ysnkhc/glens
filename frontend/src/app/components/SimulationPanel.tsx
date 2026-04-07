@@ -2,6 +2,15 @@
 
 import React from "react";
 
+interface ValidatorInfo {
+  id: string;
+  name: string;
+  style: string;
+  output: string;
+  temperature: number;
+  reason?: string;
+}
+
 interface SimulationResult {
   consensus: string;
   confidence: number;
@@ -13,6 +22,8 @@ interface SimulationResult {
   execution?: { source: string; trustScore: number; txHash?: string };
   failureType?: string | null;
   failureReason?: string;
+  validators?: ValidatorInfo[];
+  rawVerdict?: string;
 }
 
 interface SimulationPanelProps {
@@ -168,7 +179,7 @@ export default function SimulationPanel({ result, isLoading, onSimulate, network
           {/* ─── Stats ─── */}
           <div className="flex items-center justify-center gap-6">
             <div className="text-center">
-              <div className="text-lg font-black font-mono" style={{ color: "var(--text-primary)" }}>5</div>
+              <div className="text-lg font-black font-mono" style={{ color: "var(--text-primary)" }}>{result.validators && result.validators.length > 0 ? result.validators.length : 5}</div>
               <div className="text-[10px] font-bold uppercase tracking-[0.1em]" style={{ color: "var(--text-faint)" }}>Validators</div>
             </div>
             {result.prompts_found > 0 && (
@@ -192,6 +203,45 @@ export default function SimulationPanel({ result, isLoading, onSimulate, network
               </>
             )}
           </div>
+
+          {/* ─── Validator Outputs ─── */}
+          {result.validators && result.validators.length > 0 && (
+            <div className="mt-5 space-y-2">
+              <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-left mb-2" style={{ color: "var(--text-faint)" }}>Validator Outputs</div>
+              {result.validators.map((v, i) => {
+                const agreed = result.consensus === "AGREED";
+                const majorityOutput = result.rawVerdict || (result.validators && result.validators.length > 0 ? result.validators[0]?.output : "");
+                const isMatch = agreed || v.output.trim().toUpperCase() === (majorityOutput || "").trim().toUpperCase();
+                return (
+                  <div
+                    key={v.id || i}
+                    className="flex items-center gap-3 px-3 py-2 rounded-lg text-left"
+                    style={{
+                      background: "var(--bg-depth-3)",
+                      border: `1px solid ${isMatch ? "rgba(74, 222, 128, 0.15)" : "rgba(249, 115, 22, 0.15)"}`,
+                    }}
+                  >
+                    <div className="flex-shrink-0 text-sm">{isMatch ? "✅" : "❌"}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] font-semibold truncate" style={{ color: "var(--text-secondary)" }}>{v.name}</div>
+                      <div className="text-[10px] font-mono truncate" style={{ color: isMatch ? "#4ade80" : "#f97316" }}>
+                        {v.output || "(empty)"}
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0 text-[9px]" style={{ color: "var(--text-faint)" }}>{v.style}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ─── Raw verdict ─── */}
+          {result.rawVerdict && (
+            <div className="mt-3 px-3 py-2 rounded-lg text-left" style={{ background: "var(--bg-depth-3)", border: "1px solid var(--border-subtle)" }}>
+              <div className="text-[10px] font-bold uppercase tracking-[0.1em] mb-1" style={{ color: "var(--text-faint)" }}>Consensus Output</div>
+              <div className="text-sm font-mono font-bold" style={{ color: verdict.color }}>{result.rawVerdict}</div>
+            </div>
+          )}
 
           {/* ─── On-chain badge ─── */}
           {isOnChain && (
