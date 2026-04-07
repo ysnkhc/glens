@@ -761,16 +761,71 @@ function extractValidatorOutputs(txData: any): ValidatorEntry[] {
       logGL("SIMULATE → RAW consensus_data", { type: typeof consensusData, keys: typeof consensusData === "object" ? Object.keys(consensusData).slice(0, 10) : [] });
 
       if (typeof consensusData === "object" && !Array.isArray(consensusData)) {
-        const votes = consensusData.votes || consensusData.validators || [];
-        if (Array.isArray(votes)) {
-          for (let i = 0; i < votes.length; i++) {
-            const vote = votes[i];
+        // Deep log the actual structure
+        const votes = consensusData.votes;
+        const validatorsList = consensusData.validators;
+        const leaderReceipt = consensusData.leader_receipt;
+        logGL("SIMULATE → consensus_data DEEP", {
+          votes_type: typeof votes, votes_isArray: Array.isArray(votes), votes_length: Array.isArray(votes) ? votes.length : "N/A",
+          votes_sample: Array.isArray(votes) ? JSON.stringify(votes.slice(0, 2)).slice(0, 500) : typeof votes === "object" && votes ? JSON.stringify(votes).slice(0, 500) : String(votes),
+          validators_type: typeof validatorsList, validators_isArray: Array.isArray(validatorsList), validators_length: Array.isArray(validatorsList) ? validatorsList.length : "N/A",
+          validators_sample: Array.isArray(validatorsList) ? JSON.stringify(validatorsList.slice(0, 2)).slice(0, 500) : typeof validatorsList === "object" && validatorsList ? JSON.stringify(validatorsList).slice(0, 500) : String(validatorsList),
+          leader_receipt_type: typeof leaderReceipt,
+          leader_receipt_sample: typeof leaderReceipt === "object" && leaderReceipt ? JSON.stringify(leaderReceipt).slice(0, 500) : String(leaderReceipt),
+        });
+
+        // Try extracting from votes array
+        const voteArr = Array.isArray(votes) ? votes : [];
+        for (let i = 0; i < voteArr.length; i++) {
+          const vote = voteArr[i];
+          if (vote && typeof vote === "object") {
+            const output = String(vote.output || vote.result || vote.vote || vote.value || vote.receipt_output || JSON.stringify(vote));
             validators.push({
-              id: vote.address || vote.validator || `validator-${i + 1}`,
+              id: vote.address || vote.validator || vote.validator_address || `validator-${i + 1}`,
               name: vote.address ? `${String(vote.address).slice(0, 6)}...${String(vote.address).slice(-4)}` : `Validator ${i + 1}`,
-              style: vote.model || "GenLayer LLM",
-              output: String(vote.output || vote.result || vote.vote || ""),
+              style: vote.model || vote.llm_model || "GenLayer LLM",
+              output: output.slice(0, 200),
               temperature: vote.temperature ?? 0.7,
+            });
+          }
+        }
+
+        // Try extracting from validators list
+        const valArr = Array.isArray(validatorsList) ? validatorsList : [];
+        if (validators.length === 0 && valArr.length > 0) {
+          for (let i = 0; i < valArr.length; i++) {
+            const v = valArr[i];
+            if (v && typeof v === "object") {
+              const output = String(v.output || v.result || v.vote || v.value || v.receipt_output || JSON.stringify(v));
+              validators.push({
+                id: v.address || v.validator || v.validator_address || `validator-${i + 1}`,
+                name: v.address ? `${String(v.address).slice(0, 6)}...${String(v.address).slice(-4)}` : `Validator ${i + 1}`,
+                style: v.model || v.llm_model || "GenLayer LLM",
+                output: output.slice(0, 200),
+                temperature: v.temperature ?? 0.7,
+              });
+            } else if (typeof v === "string") {
+              validators.push({
+                id: `validator-${i + 1}`,
+                name: `Validator ${i + 1}`,
+                style: "GenLayer LLM",
+                output: v.slice(0, 200),
+                temperature: 0.7,
+              });
+            }
+          }
+        }
+
+        // Try extracting leader output from leader_receipt
+        if (leaderReceipt && typeof leaderReceipt === "object") {
+          const leaderOutput = String(leaderReceipt.output || leaderReceipt.result || leaderReceipt.vote || leaderReceipt.value || "");
+          if (leaderOutput && validators.length === 0) {
+            validators.push({
+              id: leaderReceipt.address || "leader",
+              name: leaderReceipt.address ? `${String(leaderReceipt.address).slice(0, 6)}...${String(leaderReceipt.address).slice(-4)} (Leader)` : "Leader",
+              style: leaderReceipt.model || "GenLayer LLM",
+              output: leaderOutput.slice(0, 200),
+              temperature: 0.7,
             });
           }
         }
