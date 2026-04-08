@@ -359,8 +359,9 @@ export function fixGenLayerContract(code: string): FixResult {
           (prefix) => methodName.startsWith(prefix)
         ) || methodName === "get" || methodName === "read";
 
-        // Also check method body for return-only patterns (no self.X = assignment)
+        // Also check method body for write indicators
         let bodyHasWrite = false;
+        let bodyHasNondet = false;
         for (let j = i + 1; j < decLines.length && j < i + 15; j++) {
           const bodyLine = decLines[j].trim();
           if (!bodyLine || bodyLine.startsWith("#") || bodyLine.startsWith('"""') || bodyLine.startsWith("'''")) continue;
@@ -370,11 +371,16 @@ export function fixGenLayerContract(code: string): FixResult {
           if (bodyIndent < methodIndent && bodyLine.length > 0) break;
           if (bodyLine.includes("self.") && bodyLine.includes("=") && !bodyLine.includes("==")) {
             bodyHasWrite = true;
-            break;
+          }
+          // Non-deterministic/consensus operations REQUIRE @gl.public.write
+          if (bodyLine.includes("gl.nondet") || bodyLine.includes("gl.eq_principle") || bodyLine.includes("exec_prompt")) {
+            bodyHasNondet = true;
           }
         }
 
-        const decorator = isReadMethod && !bodyHasWrite
+        // Non-deterministic operations always require @gl.public.write
+        // View methods are for local state reads only — they can't reach consensus
+        const decorator = (isReadMethod && !bodyHasWrite && !bodyHasNondet)
           ? `${indent}@gl.public.view`
           : `${indent}@gl.public.write`;
 
