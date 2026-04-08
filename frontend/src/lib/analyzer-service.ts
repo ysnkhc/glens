@@ -1522,69 +1522,101 @@ export async function fixContract(code: string, walletAddress?: string | null, n
       let data;
       try {
         data = safeParseStrict(String(resultStr), "fix_contract");
-        validateFixOutput(data);
       } catch {
         logGL("FIX → STRICT PARSE FAILED, using lenient", {});
         data = safeParseJSON(String(resultStr));
       }
-      const aiFixedCode = typeof data.fixed_code === "string" ? (data.fixed_code as string).trim() : "";
-      const aiSuggestions = (data.changes_made as string[]) || [];
+
+      // ─── v3: AI returns patches, not full code ───
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const patches: Array<{find: string; replace: string; reason: string}> = Array.isArray(data.patches) ? data.patches : [];
+      const aiSummary = typeof data.summary === "string" ? data.summary : "";
+      // Backward compat: if AI still returns old format with changes_made
+      const legacyChanges = Array.isArray(data.changes_made) ? (data.changes_made as string[]) : [];
+
       logGL("FIX → AI RESULT", { 
-        hasFixedCode: aiFixedCode.length > 0, 
-        fixedCodeLength: aiFixedCode.length, 
-        suggestions: aiSuggestions.length,
+        patchCount: patches.length,
+        summary: aiSummary,
+        legacyChanges: legacyChanges.length,
+        format: patches.length > 0 ? "v3-patches" : "v2-legacy",
       });
 
-      // ─── Decide: Use AI's fixed code or rule-based fix ───
-      // Validate AI's code has minimum GenLayer requirements
-      const aiCodeValid = aiFixedCode.length > 50
-        && aiFixedCode.includes("gl.Contract")
-        && aiFixedCode.includes("from genlayer import")
-        && aiFixedCode.includes("def ");
+      if (patches.length > 0) {
+        // ─── v3: Apply patches deterministically ───
+        let patchedCode = code; // Start from ORIGINAL code
+        const appliedChanges: string[] = [];
+        let appliedCount = 0;
+        let skippedCount = 0;
 
-      if (aiCodeValid) {
-        // AI produced valid code — use it as primary fix
-        logGL("FIX → USING AI FIXED CODE", { method: "ai-onchain-primary" });
+        for (const patch of patches) {
+          if (!patch.find || !patch.replace || typeof patch.find !== "string" || typeof patch.replace !== "string") {
+            logGL("FIX → PATCH SKIP (invalid)", { patch });
+            skippedCount++;
+            continue;
+          }
 
-        // Re-analyze the AI-fixed code to get accurate risk scores
-        const afterParsed = parseContract(aiFixedCode);
-        const afterReport = runRules(afterParsed, aiFixedCode);
-        const afterRisk = scoreRisk(afterParsed, afterReport, aiFixedCode);
+          if (patchedCode.includes(patch.find)) {
+            patchedCode = patchedCode.replace(patch.find, patch.replace);
+            appliedChanges.push(`🤖 AI: ${patch.reason || `${patch.find.slice(0, 30)} → ${patch.replace.slice(0, 30)}`}`);
+            appliedCount++;
+          } else {
+            logGL("FIX → PATCH NOT FOUND", { find: patch.find.slice(0, 80) });
+            skippedCount++;
+          }
+        }
 
-        // Before risk from original code
-        const beforeParsed = parseContract(code);
-        const beforeReport = runRules(beforeParsed, code);
-        const beforeRisk = scoreRisk(beforeParsed, beforeReport, code);
+        logGL("FIX → PATCHES APPLIED", { applied: appliedCount, skipped: skippedCount, patchedCodeLength: patchedCode.length });
 
-        return {
-          fixed_code: aiFixedCode,
-          changes_made: [
-            ...aiSuggestions.map((s: string) => `🤖 AI: ${s}`),
-            ...ruleFix.changes_made.filter(c => !c.startsWith("✅ Contract is already")),
-          ],
-          method: "ai-onchain",
-          before_risk: beforeRisk,
-          after_risk: afterRisk,
-          improvement: computeImprovement(beforeRisk, afterRisk),
-          validAfterFix: afterReport.issues.length === 0,
-          remainingIssues: afterReport.issues.length,
-          execution: computeTrust("CLIENT_DETERMINISTIC"),
-          aiSuggestions,
-          aiExecution: { ...computeTrust("ONCHAIN_CONFIRMED"), txHash: String(txHash) },
-        };
-      } else {
-        // AI code invalid or empty — use rule-based fix + AI suggestions
-        logGL("FIX → AI CODE INVALID, using rule-based + AI suggestions", { aiCodeLength: aiFixedCode.length });
+        if (appliedCount > 0) {
+          // Re-analyze the patched code
+          const afterParsed = parseContract(patchedCode);
+          const afterReport = runRules(afterParsed, patchedCode);
+          const afterRisk = scoreRisk(afterParsed, afterReport, patchedCode);
 
+          const beforeParsed = parseContract(code);
+          const beforeReport = runRules(beforeParsed, code);
+          const beforeRisk = scoreRisk(beforeParsed, beforeReport, code);
+
+          return {
+            fixed_code: patchedCode,
+            changes_made: [
+              ...appliedChanges,
+              ...(aiSummary ? [`📋 ${aiSummary}`] : []),
+              ...ruleFix.changes_made.filter(c => !c.startsWith("✅ Contract is already")),
+            ],
+            method: "ai-patches-onchain",
+            before_risk: beforeRisk,
+            after_risk: afterRisk,
+            improvement: computeImprovement(beforeRisk, afterRisk),
+            validAfterFix: afterReport.issues.length === 0,
+            remainingIssues: afterReport.issues.length,
+            execution: computeTrust("CLIENT_DETERMINISTIC"),
+            aiSuggestions: appliedChanges,
+            aiExecution: { ...computeTrust("ONCHAIN_CONFIRMED"), txHash: String(txHash) },
+          };
+        }
+      }
+
+      // ─── Fallback: legacy format or no patches applied ───
+      if (legacyChanges.length > 0) {
+        logGL("FIX → USING LEGACY FORMAT (changes_made only)", {});
         return {
           ...ruleFix,
-          changes_made: [...ruleFix.changes_made, ...aiSuggestions.map((s: string) => `🤖 AI: ${s}`)],
+          changes_made: [...ruleFix.changes_made, ...legacyChanges.map((s: string) => `🤖 AI: ${s}`)],
           method: "rules+ai-onchain",
           execution: computeTrust("CLIENT_DETERMINISTIC"),
-          aiSuggestions,
+          aiSuggestions: legacyChanges,
           aiExecution: { ...computeTrust("ONCHAIN_CONFIRMED"), txHash: String(txHash) },
         };
       }
+
+      // No useful AI data — just use rule fix
+      logGL("FIX → AI RETURNED NO USEFUL DATA, using rules", {});
+      return {
+        ...ruleFix,
+        method: "rules+ai-attempted",
+        aiExecution: { ...computeTrust("ONCHAIN_CONFIRMED"), txHash: String(txHash) },
+      };
     } catch (err) {
       // ─── GUARD: User rejected → DO NOT fallback ───
       if (isUserRejection(err)) {

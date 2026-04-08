@@ -129,28 +129,37 @@ class AIContractDebugger(gl.Contract):
 
     @gl.public.write
     def fix_contract(self, source_code: str) -> str:
-        """Accept full contract source code, analyze issues, and return fixes."""
+        """Accept full source code and return structured JSON patches (not full code)."""
         code = source_code[:4000]
 
         result = gl.eq_principle.prompt_non_comparative(
             lambda: gl.nondet.exec_prompt(
-                "You are a GenLayer contract fixer. Analyze this intelligent contract for issues and provide fixes.\n\n"
+                "You are a GenLayer contract fixer. Analyze this contract and return ONLY a JSON list of patches.\n\n"
                 "<source_code>\n" + code + "\n</source_code>\n\n"
-                "GenLayer rules to enforce:\n"
-                "- Must inherit from gl.Contract\n"
-                "- Must use gl.nondet.exec_prompt() (not gl.exec_prompt)\n"
-                "- Must use gl.nondet.web.get() (not requests/urllib/httpx/aiohttp)\n"
-                "- Must wrap all non-deterministic calls in gl.eq_principle\n"
+                "GenLayer rules to check:\n"
+                "- Class must inherit from gl.Contract\n"
+                "- Must use gl.nondet.exec_prompt() not gl.exec_prompt\n"
+                "- Must use gl.nondet.web.get() not requests/urllib/httpx\n"
+                "- All non-deterministic calls must be wrapped in gl.eq_principle\n"
                 "- Should have # { \"Depends\": \"py-genlayer:<hash>\" } header\n"
-                "- Should have type annotations on public methods\n"
-                "- State variables should use u256/i256/TreeMap/DynArray instead of int/dict/list\n\n"
-                "Return STRICT JSON only with this structure:\n"
-                "{\"fixed_code\": \"the complete corrected Python source code\", "
-                "\"changes_made\": [\"description of change 1\", \"description of change 2\"]}\n"
+                "- Public methods need @gl.public.write or @gl.public.view decorator\n"
+                "- State variables should use u256/i256/TreeMap/DynArray not int/dict/list\n"
+                "- Methods should have type annotations\n\n"
+                "Return this EXACT JSON structure (no markdown, no code blocks, ONLY valid JSON):\n"
+                "{\"patches\": [\n"
+                "  {\"find\": \"exact string to find in source\", \"replace\": \"exact replacement string\", \"reason\": \"why this fix is needed\"},\n"
+                "  {\"find\": \"another exact string\", \"replace\": \"its replacement\", \"reason\": \"explanation\"}\n"
+                "], \"summary\": \"one sentence summary of all fixes applied\"}\n\n"
+                "CRITICAL RULES FOR PATCHES:\n"
+                "- find must be an EXACT substring from the source code (copy-paste, no modifications)\n"
+                "- replace must be the corrected version of that exact substring\n"
+                "- Keep patches minimal — only change what is broken\n"
+                "- Do NOT include patches for things that are already correct\n"
+                "- Order patches from top of file to bottom\n"
                 "Return ONLY valid JSON. No markdown, no code blocks."
             ),
-            task="Fix the given GenLayer contract issues and return corrected source code.",
-            criteria="Output must be valid JSON with fixed_code containing the corrected contract and changes_made listing all modifications."
+            task="Identify specific bugs in a GenLayer contract and return find/replace patches.",
+            criteria="Output must be valid JSON with a patches array where each patch has exact find and replace strings from the source code, plus a summary."
         )
 
         self.last_fix = result
