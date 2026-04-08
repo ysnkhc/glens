@@ -461,6 +461,134 @@ export function fixGenLayerContract(code: string): FixResult {
     fixed = `# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }\n` + fixed;
     changes.push("✅ Added Bradbury-compatible `Depends` header");
   }
+  ///////////////////////////////////////////
+  // RULE 11 — Add parameter type annotations
+  //           (except self)
+  ///////////////////////////////////////////
+
+  {
+    const paramBefore = fixed;
+    fixed = fixed.replace(
+      /def\s+(\w+)\s*\(\s*(self(?:,\s*)?)?([^)]*)\s*\)/g,
+      (match, methodName, selfPart, params) => {
+        if (!params || !params.trim()) return match; // no params beyond self
+
+        const paramList = params.split(",").map((p: string) => p.trim()).filter(Boolean);
+        let anyChanged = false;
+
+        const typedParams = paramList.map((param: string) => {
+          if (param.includes(":")) return param; // already typed
+          if (param === "self") return "self";
+
+          anyChanged = true;
+          // Inference by name
+          if (["num", "amount", "id", "count", "price", "index", "size", "total", "balance"].some(
+            (n) => param.includes(n)
+          )) {
+            return `${param}: u256`;
+          }
+          if (["flag", "is_", "has_", "enabled", "active", "valid"].some(
+            (n) => param.includes(n)
+          )) {
+            return `${param}: bool`;
+          }
+          return `${param}: str`; // safe default
+        });
+
+        if (!anyChanged) return match;
+
+        const selfPrefix = selfPart ? "self, " : "";
+        return `def ${methodName}(${selfPrefix}${typedParams.join(", ")})`;
+      }
+    );
+    if (fixed !== paramBefore) {
+      changes.push("🔧 Added parameter type annotations to untyped method parameters");
+    }
+  }
+
+  ///////////////////////////////////////////
+  // RULE 12 — Add return type annotations
+  //           to decorated public methods
+  ///////////////////////////////////////////
+
+  {
+    const retBefore = fixed;
+    // Match @gl.public.view/write followed by def ... ) :  (no -> present)
+    // Use line-by-line scan for reliability
+    const retLines = fixed.split("\n");
+    const newRetLines: string[] = [];
+    for (let i = 0; i < retLines.length; i++) {
+      const line = retLines[i];
+      const trimmed = line.trim();
+
+      // Check if this is a def line WITHOUT return type annotation
+      const defMatch = trimmed.match(/^(?:async\s+)?def\s+(\w+)\s*\(([^)]*)\)\s*:\s*$/);
+      if (defMatch && !trimmed.includes("->")) {
+        const methodName = defMatch[1];
+        // Skip dunder methods
+        if (!methodName.startsWith("__")) {
+          // Look back for decorator to determine view/write
+          let isView = false;
+          for (let j = i - 1; j >= 0; j--) {
+            const prev = retLines[j].trim();
+            if (!prev || prev.startsWith("#")) continue;
+            if (prev.includes("@gl.public.view")) { isView = true; break; }
+            if (prev.includes("@gl.public.write")) { isView = false; break; }
+            break;
+          }
+
+          // Scan method body to infer return type
+          let hasReturn = false;
+          let returnsSelf = false;
+          for (let j = i + 1; j < retLines.length && j < i + 20; j++) {
+            const bodyLine = retLines[j].trim();
+            const bodyIndent = retLines[j].match(/^(\s*)/)?.[1]?.length || 0;
+            const methodIndent = (line.match(/^(\s*)/)?.[1]?.length || 0) + 4;
+            if (bodyIndent < methodIndent && bodyLine.length > 0 && !bodyLine.startsWith("#") && !bodyLine.startsWith('"""')) break;
+            if (bodyLine.startsWith("return ")) {
+              hasReturn = true;
+              if (bodyLine.includes("self.")) returnsSelf = true;
+            }
+          }
+
+          let returnType = "None";
+          if (isView || hasReturn) {
+            returnType = "str"; // conservative default for views/returns
+          }
+
+          // Replace the line — add -> Type before the colon
+          const indent = line.match(/^(\s*)/)?.[1] || "";
+          const newLine = line.replace(/\)\s*:\s*$/, `) -> ${returnType}:`);
+          newRetLines.push(newLine);
+          continue;
+        }
+      }
+      newRetLines.push(line);
+    }
+    fixed = newRetLines.join("\n");
+    if (fixed !== retBefore) {
+      changes.push("🔧 Added return type annotations to public methods");
+    }
+  }
+
+  ///////////////////////////////////////////
+  // RULE 13 — Make vague AI prompts strict
+  //           (critical for consensus)
+  ///////////////////////////////////////////
+
+  {
+    const promptBefore = fixed;
+    // Match vague prompts like: "Do something with: {var}"
+    fixed = fixed.replace(
+      /gl\.nondet\.exec_prompt\(\s*\n?\s*f?["']Do something with:\s*\{([^}]+)\}["']\s*\n?\s*\)/g,
+      (_match, varName) => {
+        return `gl.nondet.exec_prompt(\n            f"""Analyze this input and return ONLY a valid JSON object with the following keys:\n- summary: one-sentence description (string)\n- category: classification label (string)\n- confidence: certainty score between 0 and 100 (integer)\n\nReturn ONLY valid JSON. No markdown, no explanation.\n\nInput: {${varName}}"""\n        )`;
+      }
+    );
+    if (fixed !== promptBefore) {
+      changes.push("🔧 Replaced vague AI prompt with strict JSON-output format (consensus-safe)");
+    }
+  }
 
   ///////////////////////////////////////////
   // POST-FIX VALIDATION
