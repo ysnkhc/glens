@@ -1472,21 +1472,27 @@ export async function fixContract(code: string, walletAddress?: string | null, n
   const ruleFix = ruleBasedFix(code);
   logGL("FIX → CLIENT RULE RESULT", { changes: ruleFix.changes_made.length, beforeRisk: ruleFix.before_risk, afterRisk: ruleFix.after_risk, validAfterFix: ruleFix.validAfterFix });
 
-  // Optionally enhance with on-chain AI suggestions
+  // Optionally enhance with on-chain AI suggestions (category-based)
   if (isContractReady(walletAddress, network)) {
     try {
       const client = await createWriteClient(walletAddress!, network);
-      // v2: Send full source code — the on-chain AI analyzes and fixes
+      // v5: Send source code + analysis summary for smarter AI suggestions
       const safeCode = code.slice(0, 4000);
+      // Build analysis summary from the rule engine for AI context
+      const analysisSummary = [
+        `Issues: ${report.issues.map(i => i.message).join("; ")}`,
+        `Warnings: ${report.warnings.map(w => w.message).join("; ")}`,
+        `Risk: ${scoreRisk(parsed, report, code)}`,
+      ].join("\n").slice(0, 1000);
 
       const timer = createTxTimer("fix_contract");
-      logGL("FIX → TX START", { method: "fix_contract", payloadLength: safeCode.length });
+      logGL("FIX → TX START", { method: "fix_contract", payloadLength: safeCode.length, analysisSummaryLength: analysisSummary.length });
 
       const txHash = await sendSerialTransaction(() =>
         client.writeContract({
           address: CONTRACT_ADDRESS[network] as `0x${string}`,
           functionName: "fix_contract",
-          args: [safeCode],
+          args: [safeCode, analysisSummary],
           value: 0n,
         })
       );
@@ -1527,129 +1533,41 @@ export async function fixContract(code: string, walletAddress?: string | null, n
         data = safeParseJSON(String(resultStr));
       }
 
-      // ─── v3: AI returns patches, not full code ───
+      // ─── v5: AI returns fix categories, not patches ───
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const patches: Array<{find: string; replace: string; reason: string}> = Array.isArray(data.patches) ? data.patches : [];
+      const aiCategories: Array<{category: string; description: string; severity: string; priority: number}> = Array.isArray(data.fixes) ? data.fixes : [];
       const aiSummary = typeof data.summary === "string" ? data.summary : "";
-      // Backward compat: if AI still returns old format with changes_made
-      const legacyChanges = Array.isArray(data.changes_made) ? (data.changes_made as string[]) : [];
+      const aiConfidence = typeof data.confidence === "string" ? data.confidence : "UNKNOWN";
 
-      logGL("FIX → AI RESULT", { 
-        patchCount: patches.length,
+      logGL("FIX → AI CATEGORIES", {
+        categoryCount: aiCategories.length,
+        categories: aiCategories.map(c => c.category),
         summary: aiSummary,
-        legacyChanges: legacyChanges.length,
-        format: patches.length > 0 ? "v3-patches" : "v2-legacy",
+        confidence: aiConfidence,
       });
 
-      if (patches.length > 0) {
-        // ─── v3: Apply patches deterministically ───
-        let patchedCode = code; // Start from ORIGINAL code
-        const appliedChanges: string[] = [];
-        let appliedCount = 0;
-        let skippedCount = 0;
+      if (aiCategories.length > 0) {
+        // Merge AI insights into the rule fix — AI adds context, rules apply code changes
+        const aiInsights: string[] = aiCategories
+          .sort((a, b) => (a.priority || 99) - (b.priority || 99))
+          .map(c => `🤖 AI [${c.severity}]: ${c.description} (${c.category})`);
 
-        for (const patch of patches) {
-          if (!patch.find || !patch.replace || typeof patch.find !== "string" || typeof patch.replace !== "string") {
-            logGL("FIX → PATCH SKIP (invalid)", { patch });
-            skippedCount++;
-            continue;
-          }
-
-          if (patchedCode.includes(patch.find)) {
-            patchedCode = patchedCode.replace(patch.find, patch.replace);
-            appliedChanges.push(`🤖 AI: ${patch.reason || `${patch.find.slice(0, 30)} → ${patch.replace.slice(0, 30)}`}`);
-            appliedCount++;
-          } else {
-            // ─── Fuzzy fallback: try normalized whitespace matching ───
-            const normalizeWS = (s: string) => s.replace(/\s+/g, " ").trim();
-            const normalizedFind = normalizeWS(patch.find);
-            const normalizedCode = normalizeWS(patchedCode);
-
-            if (normalizedCode.includes(normalizedFind)) {
-              // Find the actual substring by scanning lines
-              const lines = patchedCode.split("\n");
-              const findLines = patch.find.split("\n");
-              let matched = false;
-
-              for (let li = 0; li <= lines.length - findLines.length; li++) {
-                const candidateSlice = lines.slice(li, li + findLines.length).join("\n");
-                if (normalizeWS(candidateSlice) === normalizedFind) {
-                  patchedCode = patchedCode.replace(candidateSlice, patch.replace);
-                  appliedChanges.push(`🤖 AI (fuzzy): ${patch.reason || `${patch.find.slice(0, 30)} → ${patch.replace.slice(0, 30)}`}`);
-                  appliedCount++;
-                  matched = true;
-                  break;
-                }
-              }
-
-              if (!matched) {
-                logGL("FIX → PATCH FUZZY FAILED", { find: patch.find.slice(0, 80) });
-                skippedCount++;
-              }
-            } else {
-              logGL("FIX → PATCH NOT FOUND", { find: patch.find.slice(0, 80) });
-              skippedCount++;
-            }
-          }
-        }
-
-        // ─── Rollback guard: if patched code is suspiciously short, discard ───
-        if (patchedCode.length < code.length * 0.5) {
-          logGL("FIX → ROLLBACK (patched code too short — corruption detected)", {
-            originalLength: code.length,
-            patchedLength: patchedCode.length,
-          });
-          appliedCount = 0;
-          patchedCode = code;
-        }
-
-        logGL("FIX → PATCHES APPLIED", { applied: appliedCount, skipped: skippedCount, patchedCodeLength: patchedCode.length });
-
-        if (appliedCount > 0) {
-          // Re-analyze the patched code
-          const afterParsed = parseContract(patchedCode);
-          const afterReport = runRules(afterParsed, patchedCode);
-          const afterRisk = scoreRisk(afterParsed, afterReport, patchedCode);
-
-          const beforeParsed = parseContract(code);
-          const beforeReport = runRules(beforeParsed, code);
-          const beforeRisk = scoreRisk(beforeParsed, beforeReport, code);
-
-          return {
-            fixed_code: patchedCode,
-            changes_made: [
-              ...appliedChanges,
-              ...(aiSummary ? [`📋 ${aiSummary}`] : []),
-              ...ruleFix.changes_made.filter(c => !c.startsWith("✅ Contract is already")),
-            ],
-            method: "ai-patches-onchain",
-            before_risk: beforeRisk,
-            after_risk: afterRisk,
-            improvement: computeImprovement(beforeRisk, afterRisk),
-            validAfterFix: afterReport.issues.length === 0,
-            remainingIssues: afterReport.issues.length,
-            execution: computeTrust("CLIENT_DETERMINISTIC"),
-            aiSuggestions: appliedChanges,
-            aiExecution: { ...computeTrust("ONCHAIN_CONFIRMED"), txHash: String(txHash) },
-          };
-        }
-      }
-
-      // ─── Fallback: legacy format or no patches applied ───
-      if (legacyChanges.length > 0) {
-        logGL("FIX → USING LEGACY FORMAT (changes_made only)", {});
         return {
           ...ruleFix,
-          changes_made: [...ruleFix.changes_made, ...legacyChanges.map((s: string) => `🤖 AI: ${s}`)],
-          method: "rules+ai-onchain",
+          changes_made: [
+            ...ruleFix.changes_made.filter(c => !c.startsWith("✅ Contract is already")),
+            ...aiInsights,
+            ...(aiSummary ? [`📋 AI Summary: ${aiSummary}`] : []),
+          ],
+          method: "rules+ai-categories",
           execution: computeTrust("CLIENT_DETERMINISTIC"),
-          aiSuggestions: legacyChanges,
+          aiSuggestions: aiInsights,
           aiExecution: { ...computeTrust("ONCHAIN_CONFIRMED"), txHash: String(txHash) },
         };
       }
 
       // No useful AI data — just use rule fix
-      logGL("FIX → AI RETURNED NO USEFUL DATA, using rules", {});
+      logGL("FIX → AI RETURNED NO CATEGORIES, using rules", {});
       return {
         ...ruleFix,
         method: "rules+ai-attempted",

@@ -128,88 +128,49 @@ class AIContractDebugger(gl.Contract):
         return result
 
     @gl.public.write
-    def fix_contract(self, source_code: str) -> str:
-        """Accept full source code and return structured JSON patches.
-        Uses run_nondet_unsafe with a custom validator that programmatically
-        verifies every 'find' string is a real substring of the source code.
-        This gives much higher consensus success than prompt_non_comparative.
+    def fix_contract(self, source_code: str, analysis_summary: str) -> str:
+        """Analyze contract issues and return structured fix categories.
+        Returns small, consensus-friendly JSON with issue categories
+        and short fix descriptions — NOT full code or find/replace patches.
+        The client-side rule engine applies fixes deterministically.
         """
         code = source_code[:4000]
-        import json
+        context = analysis_summary[:1000]
 
-        prompt = (
-            "You are a GenLayer contract fixer. Analyze this contract and return ONLY a JSON list of patches.\n\n"
-            "<source_code>\n" + code + "\n</source_code>\n\n"
-            "GenLayer rules to check:\n"
-            "- Class must inherit from gl.Contract\n"
-            "- Must use gl.nondet.exec_prompt() not gl.exec_prompt\n"
-            "- Must use gl.nondet.web.get() not requests/urllib/httpx\n"
-            "- All non-deterministic calls must be wrapped in gl.eq_principle\n"
-            "- Should have # { \"Depends\": \"py-genlayer:<hash>\" } header\n"
-            "- Public methods need @gl.public.write or @gl.public.view decorator\n"
-            "- State variables should use u256/i256/TreeMap/DynArray not int/dict/list\n"
-            "- Methods should have type annotations\n\n"
-            "Return this EXACT JSON structure (no markdown, no code blocks, ONLY valid JSON):\n"
-            "{\"patches\": [\n"
-            "  {\"find\": \"exact string to find in source\", \"replace\": \"exact replacement string\", \"reason\": \"why this fix is needed\"},\n"
-            "  {\"find\": \"another exact string\", \"replace\": \"its replacement\", \"reason\": \"explanation\"}\n"
-            "], \"summary\": \"one sentence summary of all fixes applied\"}\n\n"
-            "CRITICAL RULES FOR PATCHES:\n"
-            "- find must be COPIED EXACTLY from the source code — character for character, including whitespace\n"
-            "- replace must be the corrected version of that exact substring\n"
-            "- Keep patches minimal — only change what is broken\n"
-            "- Do NOT include patches for things that are already correct\n"
-            "- Order patches from top of file to bottom\n"
-            "Return ONLY valid JSON. No markdown, no code blocks."
+        result = gl.eq_principle.prompt_non_comparative(
+            lambda: gl.nondet.exec_prompt(
+                "You are a GenLayer contract auditor. Analyze this contract and return a categorized list of fixes needed.\n\n"
+                "<source_code>\n" + code + "\n</source_code>\n\n"
+                "<previous_analysis>\n" + context + "\n</previous_analysis>\n\n"
+                "Return ONLY valid JSON with this EXACT structure:\n"
+                "{\"fixes\": [\n"
+                "  {\"category\": \"CATEGORY_ID\", \"description\": \"short fix description\", \"severity\": \"ERROR or WARNING\", \"priority\": 1}\n"
+                "], \"summary\": \"one sentence summary\", \"confidence\": \"HIGH or MEDIUM or LOW\"}\n\n"
+                "VALID CATEGORY IDs (use ONLY these exact strings):\n"
+                "- wrong_inheritance: Class does not inherit from gl.Contract\n"
+                "- wrong_exec_prompt: Uses gl.exec_prompt instead of gl.nondet.exec_prompt\n"
+                "- missing_eq_principle: Non-deterministic calls not wrapped in gl.eq_principle\n"
+                "- dangerous_import: Uses requests/urllib/httpx instead of gl.nondet.web\n"
+                "- dangerous_external_call: Uses requests.get/post instead of gl.nondet.web.get\n"
+                "- missing_decorator: Public methods missing @gl.public.write or @gl.public.view\n"
+                "- missing_depends_header: Missing Depends header for deployment\n"
+                "- python_int_type: Uses int instead of u256/i256\n"
+                "- python_dict_type: Uses dict instead of TreeMap\n"
+                "- python_list_type: Uses list instead of DynArray\n"
+                "- missing_type_annotation: Methods missing parameter or return type annotations\n"
+                "- weak_prompt: AI prompt is too vague or open-ended for consensus\n"
+                "- no_contract_class: No contract class found\n\n"
+                "RULES:\n"
+                "- Only include categories for issues that ACTUALLY EXIST in the code\n"
+                "- Priority 1 = most critical, higher numbers = less critical\n"
+                "- Keep descriptions under 20 words each\n"
+                "- Do NOT invent new category IDs\n"
+                "Return ONLY valid JSON. No markdown, no code blocks."
+            ),
+            task="Categorize issues in a GenLayer contract and prioritize fixes.",
+            criteria="Output must be valid JSON with fixes array containing only valid category IDs, short descriptions, severity, and priority numbers."
         )
 
-        def leader_fn():
-            raw = gl.nondet.exec_prompt(prompt)
-            return raw
-
-        def validator_fn(leader_result) -> bool:
-            if not isinstance(leader_result, gl.vm.Return):
-                return False
-
-            # ── Parse leader output ──
-            try:
-                leader_data = json.loads(leader_result.calldata)
-                leader_patches = leader_data.get("patches", [])
-            except Exception:
-                return False
-
-            # ── Must have patches array and summary ──
-            if not isinstance(leader_patches, list):
-                return False
-            if not isinstance(leader_data.get("summary"), str):
-                return False
-
-            # ── HARD GATE: Every find must be a real substring of source ──
-            for p in leader_patches:
-                if not isinstance(p, dict):
-                    return False
-                find_str = p.get("find")
-                replace_str = p.get("replace")
-                if not isinstance(find_str, str) or not isinstance(replace_str, str):
-                    return False
-                if find_str not in code:
-                    return False  # Leader hallucinated — reject
-
-            # ── Structural sanity: independent validator run ──
-            try:
-                validator_raw = leader_fn()
-                validator_data = json.loads(validator_raw)
-                validator_patches = validator_data.get("patches", [])
-                # Patch count tolerance: within ±2
-                if abs(len(leader_patches) - len(validator_patches)) > 2:
-                    return False
-            except Exception:
-                # Validator LLM failed but leader patches are verified ─ accept
-                pass
-
-            return True
-
-        result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
         self.last_fix = result
         self.total_calls = self.total_calls + u256(1)
         return result
