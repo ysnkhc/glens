@@ -317,9 +317,7 @@ export function fixGenLayerContract(code: string): FixResult {
     const trimmed = line.trim();
 
     if (trimmed === "import requests" || /^from\s+requests\s+import/.test(trimmed)) {
-      // Preserve original indentation, use clean comment that won't trigger pattern matching
-      const originalIndent = line.match(/^(\s*)/)?.[1] || "";
-      fixedImportLines.push(`${originalIndent}# REMOVED: ${trimmed} (GenLayer: use gl.nondet.web instead)`);
+      // Delete the forbidden import line entirely — no noisy comments
       changes.push(`🔧 Removed \`${trimmed}\` (forbidden in GenLayer)`);
     } else {
       fixedImportLines.push(line);
@@ -587,6 +585,40 @@ export function fixGenLayerContract(code: string): FixResult {
     );
     if (fixed !== promptBefore) {
       changes.push("🔧 Replaced vague AI prompt with strict JSON-output format (consensus-safe)");
+    }
+  }
+
+  ///////////////////////////////////////////
+  // RULE 14 — Clean up stale/misleading comments
+  //           that contradict the fixed code
+  ///////////////////////////////////////////
+
+  {
+    const commentBefore = fixed;
+    const commentLines = fixed.split("\n");
+    const cleanedLines: string[] = [];
+    for (const line of commentLines) {
+      const trimmed = line.trim();
+      // Remove comments that describe bugs that have been fixed
+      if (trimmed.startsWith("#") && !trimmed.startsWith("# {")) {
+        const lower = trimmed.toLowerCase();
+        const isStale =
+          (lower.includes("without eq_principle") && fixed.includes("eq_principle")) ||
+          (lower.includes("without consensus") && fixed.includes("eq_principle")) ||
+          (lower.includes("without nondet") && fixed.includes("gl.nondet")) ||
+          lower.includes("# removed:") ||
+          (lower.includes("calling ai without") && fixed.includes("eq_principle")) ||
+          (lower.includes("external call without") && fixed.includes("gl.nondet.web"));
+        if (isStale) {
+          // Skip this stale comment line entirely
+          continue;
+        }
+      }
+      cleanedLines.push(line);
+    }
+    fixed = cleanedLines.join("\n");
+    if (fixed !== commentBefore) {
+      changes.push("🧹 Removed stale comments that contradicted fixed code");
     }
   }
 

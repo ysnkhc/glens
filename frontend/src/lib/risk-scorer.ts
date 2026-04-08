@@ -66,12 +66,14 @@ export function scoreRisk(parsed: ParseResult, report: RulesReport, sourceCode?:
     const allPrompts = [...inlinePrompts, ...previewPrompts];
 
     const STRICT_OUTPUT = /\b(ONLY|EXACT|EXACTLY|MUST RETURN|RETURN ONLY|one word|single word|JSON only|valid JSON|GOOD or BAD|YES or NO|TRUE or FALSE|UPPERCASE)\b/i;
-    const OPEN_ENDED = /\b(describe|explain|tell me|what do you think|summarize|discuss|analyze in detail|write a paragraph|give your opinion|how would you|random|anything|interesting|creative)\b/i;
+    const OPEN_ENDED = /\b(describe|explain|tell me|what do you think|summarize in your own words|discuss|analyze in detail|write a paragraph|give your opinion|how would you|random|anything|interesting|creative)\b/i;
 
     const hasOpenEnded = allPrompts.some(p => OPEN_ENDED.test(p));
     const hasStrictOutput = allPrompts.some(p => STRICT_OUTPUT.test(p));
 
-    if (hasOpenEnded) return "HIGH";
+    // Strict output constraints override open-ended keywords.
+    // e.g. "Analyze this input and return ONLY valid JSON" is constrained, not open-ended.
+    if (hasOpenEnded && !hasStrictOutput) return "HIGH";
 
     // FIX: If we have prompts but none are strict, it's HIGH risk
     if (allPrompts.length > 0 && !hasStrictOutput) return "HIGH";

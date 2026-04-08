@@ -266,10 +266,11 @@ function deriveHeuristicAnalysis(
     // Check if prompts are actually constrained — loose prompts = HIGH risk even with eq_principle
     const prompts = extractPrompts(code);
     const hasStrictConstraint = prompts.length === 0 || prompts.some(isPromptConstrained);
-    const OPEN_ENDED = /\b(describe|explain|tell me|what do you think|summarize|discuss|analyze in detail|write a paragraph|give your opinion|how would you|random|anything|interesting|creative)\b/i;
+    const OPEN_ENDED = /\b(describe|explain|tell me|what do you think|summarize in your own words|discuss|analyze in detail|write a paragraph|give your opinion|how would you|random|anything|interesting|creative)\b/i;
     const hasOpenEnded = prompts.some(p => OPEN_ENDED.test(p));
 
-    if (hasOpenEnded) {
+    // Strict output constraints override open-ended keywords
+    if (hasOpenEnded && !hasStrictConstraint) {
       consensusRisk = "HIGH";
     } else if (!hasStrictConstraint) {
       consensusRisk = "HIGH";

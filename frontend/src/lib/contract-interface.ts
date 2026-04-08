@@ -260,8 +260,13 @@ export function validateFixedCode(code: string): ComplianceResult {
     warnings.push("AI calls without gl.eq_principle wrapping");
   }
 
-  // Warning: dangerous imports
-  if (code.includes("import requests") || code.includes("from requests")) {
+  // Warning: dangerous imports (skip comment lines)
+  const hasRealImport = code.split("\n").some(line => {
+    const t = line.trim();
+    if (t.startsWith("#")) return false; // skip comments
+    return t === "import requests" || /^from\s+requests\s+import/.test(t);
+  });
+  if (hasRealImport) {
     warnings.push("Forbidden import: requests (use gl.nondet.web)");
   }
 
