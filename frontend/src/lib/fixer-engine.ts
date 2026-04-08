@@ -149,8 +149,8 @@ export function fixGenLayerContract(code: string): FixResult {
           task = "summarization";
           criteria = "output must convey the same key facts";
         } else {
-          task = "AI analysis";
-          criteria = "outputs must be semantically equivalent";
+          task = "AI processing";
+          criteria = "semantic equivalence";
         }
 
         if (assignMatch) {
@@ -581,9 +581,9 @@ export function fixGenLayerContract(code: string): FixResult {
 
   {
     const promptBefore = fixed;
-    // Match vague prompts like: "Do something with: {var}"
+    // Match vague prompts like: "Do something with: {var}" — including multi-line after Rule 4 wrapping
     fixed = fixed.replace(
-      /gl\.nondet\.exec_prompt\(\s*\n?\s*f?["']Do something with:\s*\{([^}]+)\}["']\s*\n?\s*\)/g,
+      /gl\.nondet\.exec_prompt\([\s\S]*?f?["']Do something with:\s*\{([^}]+)\}["'][\s\S]*?\)/g,
       (_match, varName) => {
         return `gl.nondet.exec_prompt(f"Return ONLY valid JSON with keys: summary (str), category (str), confidence (int 0-100). Input: {${varName}}")`;
       }
