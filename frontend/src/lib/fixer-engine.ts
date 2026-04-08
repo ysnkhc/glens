@@ -219,6 +219,94 @@ export function fixGenLayerContract(code: string): FixResult {
   }
 
   ///////////////////////////////////////////
+  // RULE 5b — Wrap naked gl.nondet.web calls in gl.eq_principle
+  ///////////////////////////////////////////
+
+  if (fixed.includes("gl.nondet.web.")) {
+    // Check if any gl.nondet.web calls are NOT already inside gl.eq_principle
+    // Look for lines with "= gl.nondet.web." or "return gl.nondet.web." that are NOT preceded by eq_principle
+    const hasUnwrappedWeb = fixed.split("\n").some(line => {
+      const t = line.trim();
+      return (t.match(/^\w+\s*=\s*gl\.nondet\.web\./) || t.match(/^return\s+gl\.nondet\.web\./))
+        && !t.includes("eq_principle");
+    });
+    if (hasUnwrappedWeb) {
+    const lines = fixed.split("\n");
+    const newLines: string[] = [];
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Match: varname = gl.nondet.web.get/post/...( 
+      const webAssignMatch = trimmed.match(/^(\w+)\s*=\s*gl\.nondet\.web\.\w+\(/);
+      // Match: return gl.nondet.web.get/post/...( 
+      const webReturnMatch = trimmed.match(/^return\s+gl\.nondet\.web\.\w+\(/);
+
+      if (webAssignMatch || webReturnMatch) {
+        const indent = line.match(/^(\s*)/)?.[1] || "    ";
+
+        // Collect all lines of this call (find matching closing paren)
+        let callLines = [line];
+        let parenDepth = 0;
+        for (const ch of line) {
+          if (ch === "(") parenDepth++;
+          if (ch === ")") parenDepth--;
+        }
+
+        let j = i + 1;
+        while (parenDepth > 0 && j < lines.length) {
+          callLines.push(lines[j]);
+          for (const ch of lines[j]) {
+            if (ch === "(") parenDepth++;
+            if (ch === ")") parenDepth--;
+          }
+          j++;
+        }
+
+        const fullCall = callLines.join("\n");
+
+        if (webAssignMatch) {
+          const varName = webAssignMatch[1];
+          const execStart = fullCall.indexOf("gl.nondet.web.");
+          const execCall = fullCall.slice(execStart);
+
+          newLines.push(
+            `${indent}${varName} = gl.eq_principle(`,
+            `${indent}    lambda: ${execCall},`,
+            `${indent}    task="Fetch external data with consensus",`,
+            `${indent}    criteria="All validators must retrieve the same data"`,
+            `${indent})`
+          );
+          changes.push(`🔧 Wrapped \`${varName}\` web call with \`gl.eq_principle\``);
+        } else if (webReturnMatch) {
+          const execStart = fullCall.indexOf("gl.nondet.web.");
+          const execCall = fullCall.slice(execStart);
+
+          newLines.push(
+            `${indent}return gl.eq_principle(`,
+            `${indent}    lambda: ${execCall},`,
+            `${indent}    task="Fetch external data with consensus",`,
+            `${indent}    criteria="All validators must retrieve the same data"`,
+            `${indent})`
+          );
+          changes.push(`🔧 Wrapped return web call with \`gl.eq_principle\``);
+        }
+
+        i = j;
+        continue;
+      }
+
+      newLines.push(line);
+      i++;
+    }
+
+    fixed = newLines.join("\n");
+    }
+  }
+
+  ///////////////////////////////////////////
   // RULE 6 — Remove forbidden imports
   //          (FIX: preserve original indentation)
   ///////////////////////////////////////////
