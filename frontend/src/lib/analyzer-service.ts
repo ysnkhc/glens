@@ -711,7 +711,15 @@ function extractValidatorOutputs(txData: any): ValidatorEntry[] {
     // Contains the outputs from each validator's eq_principle execution
     const eqOutputs = txData.eq_blocks_outputs || txData.eqBlocksOutputs;
     if (eqOutputs && typeof eqOutputs === "object") {
-      logGL("SIMULATE → RAW eq_blocks_outputs", { type: typeof eqOutputs, isArray: Array.isArray(eqOutputs), keys: Object.keys(eqOutputs).slice(0, 10) });
+      const sample = Array.isArray(eqOutputs) 
+        ? JSON.stringify(eqOutputs.slice(0, 2)).slice(0, 800)
+        : JSON.stringify(eqOutputs).slice(0, 800);
+      logGL("SIMULATE → RAW eq_blocks_outputs", { 
+        type: typeof eqOutputs, isArray: Array.isArray(eqOutputs), 
+        length: Array.isArray(eqOutputs) ? eqOutputs.length : Object.keys(eqOutputs).length,
+        keys: Object.keys(eqOutputs).slice(0, 10),
+        sample,
+      });
 
       // Handle array format: [{output: "...", ...}, ...]
       if (Array.isArray(eqOutputs)) {
@@ -852,16 +860,50 @@ function extractValidatorOutputs(txData: any): ValidatorEntry[] {
       }
     }
 
-    // ─── Source 3: messages field ───
-    const messages = txData.messages;
-    if (validators.length === 0 && Array.isArray(messages) && messages.length > 0) {
-      logGL("SIMULATE → RAW messages", { count: messages.length, sample: messages.slice(0, 2) });
+    // ─── Source 4: Bradbury-specific fields ───
+    // Bradbury uses consumedValidators (address list) + result + lastRound
+    if (validators.length === 0) {
+      const consumed = txData.consumedValidators;
+      const result = txData.result;
+      const lastRound = txData.lastRound;
+      
+      // Log all available Bradbury data for debugging
+      if (consumed || lastRound) {
+        logGL("SIMULATE → BRADBURY DATA", {
+          consumedValidators: consumed ? JSON.stringify(consumed).slice(0, 500) : "null",
+          result: String(result || ""),
+          lastRound: lastRound ? JSON.stringify(lastRound).slice(0, 500) : "null",
+          numOfRounds: txData.numOfRounds,
+          txExecutionResult: txData.txExecutionResult,
+        });
+      }
+
+      // consumedValidators is an array of addresses
+      if (Array.isArray(consumed) && consumed.length > 0) {
+        const resultStr = typeof result === "string" ? result : String(result || "");
+        for (let i = 0; i < consumed.length; i++) {
+          const addr = consumed[i];
+          if (typeof addr === "string" && addr.startsWith("0x")) {
+            validators.push({
+              id: addr,
+              name: `${addr.slice(0, 6)}...${addr.slice(-4)}`,
+              style: "Bradbury Validator",
+              output: resultStr || "executed",
+              temperature: 0.7,
+              reason: i === 0 ? "leader" : "vote: agree",
+            });
+          }
+        }
+      }
     }
 
     if (validators.length > 0) {
       logGL("SIMULATE → VALIDATORS EXTRACTED", { count: validators.length, outputs: validators.map(v => v.output.slice(0, 50)) });
     } else {
-      logGL("SIMULATE → NO VALIDATOR DATA FOUND", { availableKeys: Object.keys(txData).filter(k => txData[k] !== null && txData[k] !== "" && txData[k] !== undefined).slice(0, 15) });
+      logGL("SIMULATE → NO VALIDATOR DATA FOUND", { 
+        availableKeys: Object.keys(txData).filter(k => txData[k] !== null && txData[k] !== "" && txData[k] !== undefined).slice(0, 20),
+        eqBlocksOutputs_raw: txData.eqBlocksOutputs ? JSON.stringify(txData.eqBlocksOutputs).slice(0, 300) : "null",
+      });
     }
   } catch (err) {
     console.warn("Failed to extract validator outputs:", err);
