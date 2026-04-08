@@ -161,25 +161,25 @@ export function fixGenLayerContract(code: string): FixResult {
           const execCall = fullCall.slice(execStart);
 
           newLines.push(
-            `${indent}${varName} = gl.eq_principle(`,
+            `${indent}${varName} = gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
             `${indent}    task="${task}",`,
             `${indent}    criteria="${criteria}"`,
             `${indent})`
           );
-          changes.push(`🔧 Wrapped \`${varName}\` AI call with \`gl.eq_principle\` (${task.toLowerCase()})`);
+          changes.push(`🔧 Wrapped \`${varName}\` AI call with \`gl.eq_principle.prompt_non_comparative\` (${task.toLowerCase()})`);
         } else if (returnMatch) {
           const execStart = fullCall.indexOf("gl.nondet.exec_prompt");
           const execCall = fullCall.slice(execStart);
 
           newLines.push(
-            `${indent}return gl.eq_principle(`,
+            `${indent}return gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
             `${indent}    task="${task}",`,
             `${indent}    criteria="${criteria}"`,
             `${indent})`
           );
-          changes.push(`🔧 Wrapped return AI call with \`gl.eq_principle\` (${task.toLowerCase()})`);
+          changes.push(`🔧 Wrapped return AI call with \`gl.eq_principle.prompt_non_comparative\` (${task.toLowerCase()})`);
         }
 
         i = j; // Skip past the collected lines
@@ -273,25 +273,25 @@ export function fixGenLayerContract(code: string): FixResult {
           const execCall = fullCall.slice(execStart);
 
           newLines.push(
-            `${indent}${varName} = gl.eq_principle(`,
+            `${indent}${varName} = gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
             `${indent}    task="Fetch external data with consensus",`,
             `${indent}    criteria="All validators must retrieve the same data"`,
             `${indent})`
           );
-          changes.push(`🔧 Wrapped \`${varName}\` web call with \`gl.eq_principle\``);
+          changes.push(`🔧 Wrapped \`${varName}\` web call with \`gl.eq_principle.prompt_non_comparative\``);
         } else if (webReturnMatch) {
           const execStart = fullCall.indexOf("gl.nondet.web.");
           const execCall = fullCall.slice(execStart);
 
           newLines.push(
-            `${indent}return gl.eq_principle(`,
+            `${indent}return gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
             `${indent}    task="Fetch external data with consensus",`,
             `${indent}    criteria="All validators must retrieve the same data"`,
             `${indent})`
           );
-          changes.push(`🔧 Wrapped return web call with \`gl.eq_principle\``);
+          changes.push(`🔧 Wrapped return web call with \`gl.eq_principle.prompt_non_comparative\``);
         }
 
         i = j;

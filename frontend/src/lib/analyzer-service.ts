@@ -1560,9 +1560,47 @@ export async function fixContract(code: string, walletAddress?: string | null, n
             appliedChanges.push(`🤖 AI: ${patch.reason || `${patch.find.slice(0, 30)} → ${patch.replace.slice(0, 30)}`}`);
             appliedCount++;
           } else {
-            logGL("FIX → PATCH NOT FOUND", { find: patch.find.slice(0, 80) });
-            skippedCount++;
+            // ─── Fuzzy fallback: try normalized whitespace matching ───
+            const normalizeWS = (s: string) => s.replace(/\s+/g, " ").trim();
+            const normalizedFind = normalizeWS(patch.find);
+            const normalizedCode = normalizeWS(patchedCode);
+
+            if (normalizedCode.includes(normalizedFind)) {
+              // Find the actual substring by scanning lines
+              const lines = patchedCode.split("\n");
+              const findLines = patch.find.split("\n");
+              let matched = false;
+
+              for (let li = 0; li <= lines.length - findLines.length; li++) {
+                const candidateSlice = lines.slice(li, li + findLines.length).join("\n");
+                if (normalizeWS(candidateSlice) === normalizedFind) {
+                  patchedCode = patchedCode.replace(candidateSlice, patch.replace);
+                  appliedChanges.push(`🤖 AI (fuzzy): ${patch.reason || `${patch.find.slice(0, 30)} → ${patch.replace.slice(0, 30)}`}`);
+                  appliedCount++;
+                  matched = true;
+                  break;
+                }
+              }
+
+              if (!matched) {
+                logGL("FIX → PATCH FUZZY FAILED", { find: patch.find.slice(0, 80) });
+                skippedCount++;
+              }
+            } else {
+              logGL("FIX → PATCH NOT FOUND", { find: patch.find.slice(0, 80) });
+              skippedCount++;
+            }
           }
+        }
+
+        // ─── Rollback guard: if patched code is suspiciously short, discard ───
+        if (patchedCode.length < code.length * 0.5) {
+          logGL("FIX → ROLLBACK (patched code too short — corruption detected)", {
+            originalLength: code.length,
+            patchedLength: patchedCode.length,
+          });
+          appliedCount = 0;
+          patchedCode = code;
         }
 
         logGL("FIX → PATCHES APPLIED", { applied: appliedCount, skipped: skippedCount, patchedCodeLength: patchedCode.length });

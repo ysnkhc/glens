@@ -423,6 +423,42 @@ function checkDependsHeader(
   }
 }
 
+/**
+ * Rule: Detect raw gl.eq_principle() calls that should use explicit form
+ * (.prompt_non_comparative, .prompt_comparative, or .strict_eq)
+ */
+function checkWrongEqPrincipleForm(
+  sourceCode: string,
+  report: RulesReport
+): void {
+  const lines = sourceCode.split("\n");
+  // Valid forms: gl.eq_principle.prompt_non_comparative, .prompt_comparative, .strict_eq
+  const validForms = [
+    "gl.eq_principle.prompt_non_comparative",
+    "gl.eq_principle.prompt_comparative",
+    "gl.eq_principle.strict_eq",
+  ];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith("#")) continue;
+
+    // Check for gl.eq_principle( — the raw function call form
+    if (trimmed.includes("gl.eq_principle(") && !validForms.some(f => trimmed.includes(f))) {
+      report.warnings.push({
+        ruleId: "wrong_eq_principle_form",
+        severity: "WARNING",
+        message:
+          `Line ${i + 1}: \`gl.eq_principle()\` used directly. ` +
+          `Use \`gl.eq_principle.prompt_non_comparative()\`, \`gl.eq_principle.prompt_comparative()\`, ` +
+          `or \`gl.eq_principle.strict_eq()\` for explicit consensus pattern.`,
+        line: i + 1,
+      });
+    }
+  }
+}
+
 function generateSuggestions(
   parsed: ParseResult,
   report: RulesReport
@@ -523,6 +559,7 @@ export function runRules(parsed: ParseResult, sourceCode?: string): RulesReport 
     checkDangerousExternalCalls(sourceCode, report);
     checkMissingEqPrinciple(sourceCode, parsed, report);
     checkMissingNondetWeb(sourceCode, parsed, report);
+    checkWrongEqPrincipleForm(sourceCode, report);
     checkIntType(sourceCode, parsed, report);
   }
   checkDangerousImports(parsed, report);
