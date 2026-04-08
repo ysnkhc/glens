@@ -585,7 +585,7 @@ export function fixGenLayerContract(code: string): FixResult {
     fixed = fixed.replace(
       /gl\.nondet\.exec_prompt\(\s*\n?\s*f?["']Do something with:\s*\{([^}]+)\}["']\s*\n?\s*\)/g,
       (_match, varName) => {
-        return `gl.nondet.exec_prompt(\n            f"""Analyze this input and return ONLY a valid JSON object with the following keys:\n- summary: one-sentence description (string)\n- category: classification label (string)\n- confidence: certainty score between 0 and 100 (integer)\n\nReturn ONLY valid JSON. No markdown, no explanation.\n\nInput: {${varName}}"""\n        )`;
+        return `gl.nondet.exec_prompt(f"Return ONLY valid JSON with keys: summary (str), category (str), confidence (int 0-100). Input: {${varName}}")`;
       }
     );
     if (fixed !== promptBefore) {
