@@ -127,11 +127,10 @@ export function truncatePayload(method: string, payload: string): string {
 // ─── Strict JSON Parsing ───────────────────────────────────────
 
 /**
- * Strict JSON parser — rejects non-object results.
- * Used for AI responses that MUST return valid JSON objects.
+ * Extract the JSON object from a string that may contain prose/markdown around it.
+ * AI models sometimes prepend explanatory text before the JSON.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function safeParseStrict(str: string, context: string = "result"): Record<string, any> {
+function extractJSONFromText(str: string): string {
   let cleaned = str.trim();
 
   // Strip markdown code fences if present
@@ -140,6 +139,28 @@ export function safeParseStrict(str: string, context: string = "result"): Record
     const filtered = lines.filter((l) => !l.trim().startsWith("```"));
     cleaned = filtered.join("\n").trim();
   }
+
+  // If it already starts with '{', return as-is
+  if (cleaned.startsWith("{")) return cleaned;
+
+  // AI sometimes prepends explanatory text before the JSON.
+  // Find the first '{' and last '}' to extract the JSON object.
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    return cleaned.slice(firstBrace, lastBrace + 1);
+  }
+
+  return cleaned;
+}
+
+/**
+ * Strict JSON parser — rejects non-object results.
+ * Used for AI responses that MUST return valid JSON objects.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function safeParseStrict(str: string, context: string = "result"): Record<string, any> {
+  const cleaned = extractJSONFromText(str);
 
   try {
     const parsed = JSON.parse(cleaned);

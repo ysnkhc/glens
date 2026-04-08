@@ -133,25 +133,24 @@ export function fixGenLayerContract(code: string): FixResult {
         let criteria: string;
 
         if (/\b(classify|categor|sentiment|positive|negative|label)\b/.test(promptLower)) {
-          task = "Classify input into predefined categories";
-          criteria = "Output must be exactly one of the defined category strings";
+          task = "classification";
+          criteria = "output must match one of the defined categories";
         } else if (/\b(yes|no|true|false|approve|reject|valid|invalid)\b/.test(promptLower) &&
                    /\b(one word|single word|only)\b/.test(promptLower)) {
-          task = "Make a binary decision";
-          criteria = "Output must be exactly YES or NO (or TRUE/FALSE)";
+          task = "binary decision";
+          criteria = "output must be exactly YES or NO";
         } else if (/\b(number|price|amount|count|score|rating|percent)\b/.test(promptLower)) {
-          task = "Return a deterministic numeric result";
-          criteria = "Output must be an identical number across all validator runs";
+          task = "numeric extraction";
+          criteria = "output must be an identical number";
         } else if (/\b(json|structure|object|array|\{.*\})\b/.test(promptLower)) {
-          task = "Generate structured JSON data";
-          criteria = "Output must be valid JSON with identical keys and equivalent values";
+          task = "structured data extraction";
+          criteria = "output must be valid JSON with identical keys";
         } else if (/\b(summarize|summary|explain|describe)\b/.test(promptLower)) {
-          task = "Summarize or explain the given input";
-          criteria = "Output must convey the same key facts and conclusions";
+          task = "summarization";
+          criteria = "output must convey the same key facts";
         } else {
-          // Fallback — honest about weakness
-          task = "Process the AI prompt";
-          criteria = "Outputs must be semantically equivalent";
+          task = "AI analysis";
+          criteria = "outputs must be semantically equivalent";
         }
 
         if (assignMatch) {
@@ -275,8 +274,8 @@ export function fixGenLayerContract(code: string): FixResult {
           newLines.push(
             `${indent}${varName} = gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
-            `${indent}    task="Fetch external data with consensus",`,
-            `${indent}    criteria="All validators must retrieve the same data"`,
+            `${indent}    task="external data fetch",`,
+            `${indent}    criteria="all validators must retrieve the same data"`,
             `${indent})`
           );
           changes.push(`🔧 Wrapped \`${varName}\` web call with \`gl.eq_principle.prompt_non_comparative\``);
@@ -287,8 +286,8 @@ export function fixGenLayerContract(code: string): FixResult {
           newLines.push(
             `${indent}return gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
-            `${indent}    task="Fetch external data with consensus",`,
-            `${indent}    criteria="All validators must retrieve the same data"`,
+            `${indent}    task="external data fetch",`,
+            `${indent}    criteria="all validators must retrieve the same data"`,
             `${indent})`
           );
           changes.push(`🔧 Wrapped return web call with \`gl.eq_principle.prompt_non_comparative\``);

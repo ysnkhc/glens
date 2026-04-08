@@ -199,6 +199,16 @@ function safeParseJSON(text: string): any {
     const filtered = lines.filter((l) => !l.trim().startsWith("```"));
     cleaned = filtered.join("\n").trim();
   }
+
+  // If text has prose before JSON, extract the JSON portion
+  if (!cleaned.startsWith("{")) {
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+    }
+  }
+
   try {
     return JSON.parse(cleaned);
   } catch {
