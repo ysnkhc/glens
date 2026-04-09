@@ -134,23 +134,23 @@ export function fixGenLayerContract(code: string): FixResult {
 
         if (/\b(classify|categor|sentiment|positive|negative|label)\b/.test(promptLower)) {
           task = "classification";
-          criteria = "output must be exactly one of the defined categories with no extra text";
+          criteria = "output must match one of the defined categories";
         } else if (/\b(yes|no|true|false|approve|reject|valid|invalid)\b/.test(promptLower) &&
                    /\b(one word|single word|only)\b/.test(promptLower)) {
           task = "binary decision";
-          criteria = "output must be exactly YES or NO with no extra text";
+          criteria = "output must be exactly YES or NO";
         } else if (/\b(number|price|amount|count|score|rating|percent)\b/.test(promptLower)) {
           task = "numeric extraction";
-          criteria = "output must be an identical number with no extra text";
+          criteria = "output must be an identical number";
         } else if (/\b(json|structure|object|array|\{.*\})\b/.test(promptLower)) {
           task = "structured data extraction";
-          criteria = "output must be identical raw JSON with matching keys, values, and no extra text";
+          criteria = "output must be valid JSON with identical keys";
         } else if (/\b(summarize|summary|explain|describe)\b/.test(promptLower)) {
           task = "summarization";
-          criteria = "output must be identical raw JSON with keys: summary (str), key_points (list of str)";
+          criteria = "output must convey the same key facts";
         } else {
           task = "AI processing";
-          criteria = "output must be identical raw JSON with no markdown, no explanation, no extra text";
+          criteria = "semantic equivalence";
         }
 
         if (assignMatch) {
@@ -760,64 +760,20 @@ export function fixGenLayerContract(code: string): FixResult {
 
   ///////////////////////////////////////////
   // RULE 13 — Make vague AI prompts strict
-  //           (critical for consensus — validators must produce identical output)
+  //           (critical for consensus)
   ///////////////////////////////////////////
 
   {
     const promptBefore = fixed;
-    const promptLines = fixed.split("\n");
-    const strictPromptLines: string[] = [];
-
-    for (let i = 0; i < promptLines.length; i++) {
-      const line = promptLines[i];
-      const trimmed = line.trim();
-
-      // Match any exec_prompt call with a vague/open-ended prompt
-      const execMatch = trimmed.match(/gl\.nondet\.exec_prompt\(\s*f?["'](.*)["']\s*\)/);
-      if (execMatch) {
-        const promptText = execMatch[1];
-        const promptLower = promptText.toLowerCase();
-
-        // Check if the prompt is already strict (has JSON formatting instructions)
-        const isAlreadyStrict =
-          promptLower.includes("return only") &&
-          (promptLower.includes("json") || promptLower.includes("valid json"));
-
-        if (!isAlreadyStrict) {
-          const indent = line.match(/^(\s*)/)?.[1] || "        ";
-
-          // Extract any f-string variables from the original prompt
-          const fVars = [...promptText.matchAll(/\{(\w+)\}/g)].map(m => m[1]);
-          const inputRef = fVars.length > 0 ? `{${fVars[0]}}` : "{input}";
-
-          // Detect the intent to pick the right strict template
-          let strictPrompt: string;
-          if (/\b(classify|categor|sentiment|label)\b/.test(promptLower)) {
-            strictPrompt = `f"You are a strict classifier. Return ONLY the JSON object, nothing else. No markdown, no explanation. JSON format: {{\\"category\\": \\"<string>\\", \\"confidence\\": <int 0-100>}}. Input: ${inputRef}"`;
-          } else if (/\b(yes|no|true|false|approve|reject)\b/.test(promptLower)) {
-            strictPrompt = `f"Return ONLY the JSON object, nothing else. No markdown, no explanation. JSON format: {{\\"decision\\": \\"YES or NO\\", \\"reason\\": \\"<string>\\"}}. Input: ${inputRef}"`;
-          } else if (/\b(number|price|amount|score|rating)\b/.test(promptLower)) {
-            strictPrompt = `f"Return ONLY the JSON object, nothing else. No markdown, no explanation. JSON format: {{\\"value\\": <number>, \\"unit\\": \\"<string>\\"}}. Input: ${inputRef}"`;
-          } else {
-            // General strict prompt — covers "Do something with", summarization, etc.
-            strictPrompt = `f"Return ONLY the JSON object, nothing else before or after. No markdown, no explanation, no extra text whatsoever. JSON format: {{\\"summary\\": \\"<string>\\", \\"category\\": \\"<string>\\", \\"confidence\\": <int 0-100>}}. Input: ${inputRef}"`;
-          }
-
-          // Replace the exec_prompt line with the strict version
-          strictPromptLines.push(line.replace(
-            /gl\.nondet\.exec_prompt\(\s*f?["'].*["']\s*\)/,
-            `gl.nondet.exec_prompt(${strictPrompt})`
-          ));
-          continue;
-        }
+    // Match vague prompts like: "Do something with: {var}" — including multi-line after Rule 4 wrapping
+    fixed = fixed.replace(
+      /gl\.nondet\.exec_prompt\([\s\S]*?f?["']Do something with:\s*\{([^}]+)\}["'][\s\S]*?\)/g,
+      (_match, varName) => {
+        return `gl.nondet.exec_prompt(f"Return ONLY valid JSON with keys: summary (str), category (str), confidence (int 0-100). Input: {${varName}}")`;
       }
-
-      strictPromptLines.push(line);
-    }
-
-    fixed = strictPromptLines.join("\n");
+    );
     if (fixed !== promptBefore) {
-      changes.push("🔧 Replaced vague AI prompt(s) with strict JSON-only format (consensus-safe)");
+      changes.push("🔧 Replaced vague AI prompt with strict JSON-output format (consensus-safe)");
     }
   }
 
