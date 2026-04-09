@@ -306,6 +306,71 @@ export function fixGenLayerContract(code: string): FixResult {
   }
 
   ///////////////////////////////////////////
+  // RULE 5c — Move .json()/.text inside consensus lambda for web calls
+  //           (deserialization must be consensus-validated, not post-hoc)
+  //           Uses .text instead of .json() for type-safe str return
+  ///////////////////////////////////////////
+
+  {
+    const r5cLines = fixed.split("\n");
+    let r5cChanged = false;
+
+    for (let i = 0; i < r5cLines.length; i++) {
+      const trimmed = r5cLines[i].trim();
+
+      // Skip lines that are already inside a lambda definition
+      if (trimmed.includes("lambda:")) continue;
+
+      // Match: return varName.json() or varName.json() or data = varName.json()
+      // Also handles: return varName.text or varName.text
+      const accessorMatch = trimmed.match(/\b(\w+)\.(json\(\)|text)\b/);
+      if (!accessorMatch) continue;
+
+      const varName = accessorMatch[1];
+      const accessor = accessorMatch[2]; // "json()" or "text"
+
+      // Look backward for: varName = gl.eq_principle... with lambda: gl.nondet.web...
+      let foundAssign = false;
+      let lambdaLineIdx = -1;
+
+      for (let k = i - 1; k >= Math.max(0, i - 15); k--) {
+        const prevTrimmed = r5cLines[k].trim();
+
+        // Found the lambda line with a web call
+        if (prevTrimmed.includes("lambda:") && prevTrimmed.includes("gl.nondet.web.")) {
+          lambdaLineIdx = k;
+        }
+
+        // Found the assignment to this variable via eq_principle
+        if (prevTrimmed.startsWith(`${varName} = gl.eq_principle`)) {
+          foundAssign = true;
+          break;
+        }
+      }
+
+      if (foundAssign && lambdaLineIdx >= 0) {
+        // Move accessor inside the lambda — use .text for type-safe str return
+        // .json() returns a dict (type mismatch with -> str annotation)
+        // .text returns the raw response body as str (correct for GenLayer)
+        r5cLines[lambdaLineIdx] = r5cLines[lambdaLineIdx].replace(
+          /(gl\.nondet\.web\.\w+\([^)]*\))\s*,/,
+          "$1.text,"
+        );
+
+        // Simplify the usage line: remove .json() or .text accessor
+        r5cLines[i] = r5cLines[i].replace(`${varName}.${accessor}`, varName);
+
+        r5cChanged = true;
+      }
+    }
+
+    if (r5cChanged) {
+      fixed = r5cLines.join("\n");
+      changes.push("🔧 Moved response accessor inside consensus lambda (`.text` — type-safe, consensus-validated)");
+    }
+  }
+
+  ///////////////////////////////////////////
   // RULE 6 — Remove forbidden imports
   //          (FIX: preserve original indentation)
   ///////////////////////////////////////////
