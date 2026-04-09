@@ -269,25 +269,37 @@ export function fixGenLayerContract(code: string): FixResult {
         if (webAssignMatch) {
           const varName = webAssignMatch[1];
           const execStart = fullCall.indexOf("gl.nondet.web.");
-          const execCall = fullCall.slice(execStart);
+          let execCall = fullCall.slice(execStart);
+
+          // Proactively add .text if no accessor is already chained
+          // Ensures the raw response body (str) is consensus-validated, not the response object
+          if (!execCall.includes(".text") && !execCall.includes(".json()")) {
+            // Strip trailing ) and add .text)
+            execCall = execCall.replace(/\)\s*$/, ").text");
+          }
 
           newLines.push(
             `${indent}${varName} = gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
             `${indent}    task="external data fetch",`,
-            `${indent}    criteria="all validators must retrieve the same data and return identical JSON structure"`,
+            `${indent}    criteria="response body must be byte-identical across all validators"`,
             `${indent})`
           );
           changes.push(`🔧 Wrapped \`${varName}\` web call with \`gl.eq_principle.prompt_non_comparative\``);
         } else if (webReturnMatch) {
           const execStart = fullCall.indexOf("gl.nondet.web.");
-          const execCall = fullCall.slice(execStart);
+          let execCall = fullCall.slice(execStart);
+
+          // Proactively add .text if no accessor is already chained
+          if (!execCall.includes(".text") && !execCall.includes(".json()")) {
+            execCall = execCall.replace(/\)\s*$/, ").text");
+          }
 
           newLines.push(
             `${indent}return gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
             `${indent}    task="external data fetch",`,
-            `${indent}    criteria="all validators must retrieve the same data and return identical JSON structure"`,
+            `${indent}    criteria="response body must be byte-identical across all validators"`,
             `${indent})`
           );
           changes.push(`🔧 Wrapped return web call with \`gl.eq_principle.prompt_non_comparative\``);
@@ -323,7 +335,8 @@ export function fixGenLayerContract(code: string): FixResult {
 
       // Match: return varName.json() or varName.json() or data = varName.json()
       // Also handles: return varName.text or varName.text
-      const accessorMatch = trimmed.match(/\b(\w+)\.(json\(\)|text)\b/);
+      // NOTE: No trailing \b — ) in json() is not a word char so \b fails after it
+      const accessorMatch = trimmed.match(/\b(\w+)\.(json\(\)|text)/);
       if (!accessorMatch) continue;
 
       const varName = accessorMatch[1];
