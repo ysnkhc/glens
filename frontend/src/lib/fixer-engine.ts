@@ -275,7 +275,7 @@ export function fixGenLayerContract(code: string): FixResult {
             `${indent}${varName} = gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
             `${indent}    task="external data fetch",`,
-            `${indent}    criteria="all validators must retrieve the same data"`,
+            `${indent}    criteria="all validators must retrieve the same data and return identical JSON structure"`,
             `${indent})`
           );
           changes.push(`🔧 Wrapped \`${varName}\` web call with \`gl.eq_principle.prompt_non_comparative\``);
@@ -287,7 +287,7 @@ export function fixGenLayerContract(code: string): FixResult {
             `${indent}return gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
             `${indent}    task="external data fetch",`,
-            `${indent}    criteria="all validators must retrieve the same data"`,
+            `${indent}    criteria="all validators must retrieve the same data and return identical JSON structure"`,
             `${indent})`
           );
           changes.push(`🔧 Wrapped return web call with \`gl.eq_principle.prompt_non_comparative\``);
@@ -361,6 +361,7 @@ export function fixGenLayerContract(code: string): FixResult {
         // Also check method body for write indicators
         let bodyHasWrite = false;
         let bodyHasNondet = false;
+        let bodyHasNonSelfReturn = false;
         for (let j = i + 1; j < decLines.length && j < i + 15; j++) {
           const bodyLine = decLines[j].trim();
           if (!bodyLine || bodyLine.startsWith("#") || bodyLine.startsWith('"""') || bodyLine.startsWith("'''")) continue;
@@ -375,11 +376,16 @@ export function fixGenLayerContract(code: string): FixResult {
           if (bodyLine.includes("gl.nondet") || bodyLine.includes("gl.eq_principle") || bodyLine.includes("exec_prompt")) {
             bodyHasNondet = true;
           }
+          // Return of non-self data (e.g., from web calls or AI) indicates write method
+          if (bodyLine.startsWith("return ") && !bodyLine.includes("self.")) {
+            bodyHasNonSelfReturn = true;
+          }
         }
 
         // Non-deterministic operations always require @gl.public.write
         // View methods are for local state reads only — they can't reach consensus
-        const decorator = (isReadMethod && !bodyHasWrite && !bodyHasNondet)
+        // Methods returning external/computed data also need write (consensus validation)
+        const decorator = (isReadMethod && !bodyHasWrite && !bodyHasNondet && !bodyHasNonSelfReturn)
           ? `${indent}@gl.public.view`
           : `${indent}@gl.public.write`;
 
@@ -432,6 +438,100 @@ export function fixGenLayerContract(code: string): FixResult {
       return `${indent}${varName}: ${inferredType}`;
     }
   );
+
+  ///////////////////////////////////////////
+  // RULE 8b — Initialize uninitialized state variables in __init__
+  ///////////////////////////////////////////
+
+  {
+    const stateVarRegex = /^\s+(\w+)\s*:\s*(str|u256|i256|bool|TreeMap\[[^\]]*\]|DynArray\[[^\]]*\])\s*$/gm;
+    const typedStateVars: {name: string; type: string}[] = [];
+    let svMatch;
+    while ((svMatch = stateVarRegex.exec(fixed)) !== null) {
+      typedStateVars.push({ name: svMatch[1], type: svMatch[2] });
+    }
+
+    if (typedStateVars.length > 0) {
+      const initLines = fixed.split("\n");
+      let initDefIdx = -1;
+      let lastSelfIdx = -1;
+      let defIndentLen = 0;
+      let bodyIndent = "        ";
+
+      for (let idx = 0; idx < initLines.length; idx++) {
+        if (/^\s*def __init__\(self\)\s*:/.test(initLines[idx])) {
+          initDefIdx = idx;
+          defIndentLen = (initLines[idx].match(/^(\s*)/)?.[1] || "").length;
+          bodyIndent = " ".repeat(defIndentLen + 4);
+          for (let j = idx + 1; j < initLines.length; j++) {
+            const t = initLines[j].trim();
+            if (!t || t.startsWith("#")) continue;
+            const jLen = (initLines[j].match(/^(\s*)/)?.[1] || "").length;
+            if (jLen <= defIndentLen) break;
+            if (t.startsWith("self.")) lastSelfIdx = j;
+          }
+          break;
+        }
+      }
+
+      // Gather __init__ body to check existing initializations
+      let initBody = "";
+      if (initDefIdx >= 0) {
+        for (let j = initDefIdx + 1; j < initLines.length; j++) {
+          const t = initLines[j].trim();
+          if (t && !t.startsWith("#")) {
+            const jLen = (initLines[j].match(/^(\s*)/)?.[1] || "").length;
+            if (jLen <= defIndentLen) break;
+          }
+          initBody += initLines[j] + "\n";
+        }
+      }
+
+      const missing = typedStateVars.filter(sv => !initBody.includes(`self.${sv.name}`));
+
+      if (missing.length > 0) {
+        const defaultValue = (type: string): string => {
+          if (type === "u256" || type === "i256") return `${type}(0)`;
+          if (type === "bool") return "False";
+          if (type.startsWith("TreeMap")) return `${type}()`;
+          if (type.startsWith("DynArray")) return `${type}()`;
+          return '""';
+        };
+
+        const newInits = missing.map(sv =>
+          `${bodyIndent}self.${sv.name} = ${defaultValue(sv.type)}`
+        );
+
+        if (initDefIdx >= 0 && lastSelfIdx >= 0) {
+          // Insert after the last self.xxx = line in existing __init__
+          initLines.splice(lastSelfIdx + 1, 0, ...newInits);
+        } else if (initDefIdx >= 0) {
+          // __init__ exists but no self. lines — insert after def line
+          initLines.splice(initDefIdx + 1, 0, ...newInits);
+        } else {
+          // No __init__ — create one after state variable declarations
+          const classMatch = fixed.match(/^(\s*)class\s+\w+/m);
+          const clsIndent = classMatch ? classMatch[1] + "    " : "    ";
+          const methIndent = clsIndent + "    ";
+          let insertAt = 0;
+          for (let idx = 0; idx < initLines.length; idx++) {
+            if (/^\s+\w+\s*:\s*(str|u256|i256|bool|TreeMap|DynArray)/.test(initLines[idx])) {
+              insertAt = idx;
+            }
+          }
+          const initBlock = [
+            "",
+            `${clsIndent}def __init__(self):`,
+            ...missing.map(sv => `${methIndent}self.${sv.name} = ${defaultValue(sv.type)}`),
+          ];
+          initLines.splice(insertAt + 1, 0, ...initBlock);
+        }
+
+        fixed = initLines.join("\n");
+        changes.push(`✅ Initialized ${missing.map(m => "\`" + m.name + "\`").join(", ")} in \`__init__\``);
+      }
+    }
+  }
 
   ///////////////////////////////////////////
   // RULE 9 — Fix Python types → GenLayer types
