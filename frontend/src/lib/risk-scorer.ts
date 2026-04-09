@@ -71,12 +71,16 @@ export function scoreRisk(parsed: ParseResult, report: RulesReport, sourceCode?:
     const hasOpenEnded = allPrompts.some(p => OPEN_ENDED.test(p));
     const hasStrictOutput = allPrompts.some(p => STRICT_OUTPUT.test(p));
 
-    // Strict output constraints override open-ended keywords.
-    // e.g. "Analyze this input and return ONLY valid JSON" is constrained, not open-ended.
-    if (hasOpenEnded && !hasStrictOutput) return "HIGH";
+    // Strict output constraints ALWAYS override open-ended keywords.
+    // e.g. "Return ONLY valid JSON with keys: summary, category..." is constrained
+    // even though "summary" or dynamic input text might trigger OPEN_ENDED patterns.
+    if (hasStrictOutput) return "LOW";
 
-    // FIX: If we have prompts but none are strict, it's HIGH risk
-    if (allPrompts.length > 0 && !hasStrictOutput) return "HIGH";
+    // No strict constraints — check for open-ended patterns
+    if (hasOpenEnded) return "HIGH";
+
+    // Has prompts but none are strict and none are open-ended
+    if (allPrompts.length > 0) return "MEDIUM";
 
     // FIX: If contract has AI but we can't find ANY prompts (dynamic generation),
     // default to MEDIUM — we can't verify safety without seeing the prompt text
