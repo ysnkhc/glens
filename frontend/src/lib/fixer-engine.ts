@@ -269,14 +269,7 @@ export function fixGenLayerContract(code: string): FixResult {
         if (webAssignMatch) {
           const varName = webAssignMatch[1];
           const execStart = fullCall.indexOf("gl.nondet.web.");
-          let execCall = fullCall.slice(execStart);
-
-          // Proactively add .text if no accessor is already chained
-          // Ensures the raw response body (str) is consensus-validated, not the response object
-          if (!execCall.includes(".text") && !execCall.includes(".json()")) {
-            // Strip trailing ) and add .text)
-            execCall = execCall.replace(/\)\s*$/, ").text");
-          }
+          const execCall = fullCall.slice(execStart);
 
           newLines.push(
             `${indent}${varName} = gl.eq_principle.prompt_non_comparative(`,
@@ -288,12 +281,7 @@ export function fixGenLayerContract(code: string): FixResult {
           changes.push(`🔧 Wrapped \`${varName}\` web call with \`gl.eq_principle.prompt_non_comparative\``);
         } else if (webReturnMatch) {
           const execStart = fullCall.indexOf("gl.nondet.web.");
-          let execCall = fullCall.slice(execStart);
-
-          // Proactively add .text if no accessor is already chained
-          if (!execCall.includes(".text") && !execCall.includes(".json()")) {
-            execCall = execCall.replace(/\)\s*$/, ").text");
-          }
+          const execCall = fullCall.slice(execStart);
 
           newLines.push(
             `${indent}return gl.eq_principle.prompt_non_comparative(`,
@@ -320,13 +308,15 @@ export function fixGenLayerContract(code: string): FixResult {
   ///////////////////////////////////////////
   // RULE 5c — Move .json()/.text inside consensus lambda for web calls
   //           (deserialization must be consensus-validated, not post-hoc)
-  //           Uses .text instead of .json() for type-safe str return
+  //           Preserves original accessor: .json() stays .json(), .text stays .text
+  //           Bare web calls (no accessor) get .text as safe default
   ///////////////////////////////////////////
 
   {
     const r5cLines = fixed.split("\n");
     let r5cChanged = false;
 
+    // Pass 1: Move existing .json()/.text accessors inside the lambda
     for (let i = 0; i < r5cLines.length; i++) {
       const trimmed = r5cLines[i].trim();
 
@@ -362,24 +352,40 @@ export function fixGenLayerContract(code: string): FixResult {
       }
 
       if (foundAssign && lambdaLineIdx >= 0) {
-        // Move accessor inside the lambda — use .text for type-safe str return
-        // .json() returns a dict (type mismatch with -> str annotation)
-        // .text returns the raw response body as str (correct for GenLayer)
+        // Move the ORIGINAL accessor inside the lambda — preserve .json() or .text
+        // .json() → keeps parsed dict (more accurate for API responses)
+        // .text  → keeps raw string (type-safe for -> str annotation)
         r5cLines[lambdaLineIdx] = r5cLines[lambdaLineIdx].replace(
           /(gl\.nondet\.web\.\w+\([^)]*\))\s*,/,
-          "$1.text,"
+          `$1.${accessor},`
         );
 
         // Simplify the usage line: remove .json() or .text accessor
         r5cLines[i] = r5cLines[i].replace(`${varName}.${accessor}`, varName);
 
         r5cChanged = true;
+        changes.push(`🔧 Moved .${accessor} inside consensus lambda (deserialization is now consensus-validated)`);
+      }
+    }
+
+    // Pass 2: Add .text to bare web calls in lambdas that have no accessor
+    // (safe default — raw response objects should not pass through consensus)
+    for (let i = 0; i < r5cLines.length; i++) {
+      const trimmed = r5cLines[i].trim();
+      if (trimmed.includes("lambda:") && trimmed.includes("gl.nondet.web.")) {
+        if (!trimmed.includes(".text") && !trimmed.includes(".json()")) {
+          r5cLines[i] = r5cLines[i].replace(
+            /(gl\.nondet\.web\.\w+\([^)]*\))\s*,/,
+            "$1.text,"
+          );
+          r5cChanged = true;
+          changes.push("🔧 Added `.text` to bare web call inside lambda (safe default for consensus)");
+        }
       }
     }
 
     if (r5cChanged) {
       fixed = r5cLines.join("\n");
-      changes.push("🔧 Moved response accessor inside consensus lambda (`.text` — type-safe, consensus-validated)");
     }
   }
 
