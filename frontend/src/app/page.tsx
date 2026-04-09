@@ -399,24 +399,47 @@ export default function Home() {
       setSimulationResult(null);
       setTimeout(() => setFixToast(null), 10000);
 
-      // Auto re-analyze the fixed code
+      // Auto re-analyze the fixed code — RESILIENT VERSION
+      // After a long fix_contract TX (4-8 min), the wallet session can go stale.
+      // Re-fetch the wallet address to ensure it's still valid before the second TX.
       logGL("ACTION → Fix: auto re-analyze starting", { fixedCodeLength: data.fixed_code.length });
       setIsLoading(true);
       setActivePanel("results");
       try {
-        const newResult = await analyzeContract(data.fixed_code, walletAddress, network);
-        setResult(newResult);
-        logGL("ACTION ✅ Fix: auto re-analyze complete", { riskLevel: newResult.risk_level });
+        // Re-fetch fresh wallet address — the one in state may be stale after 8 min fix TX
+        const freshAddress = await getConnectedAddress();
+        if (freshAddress) {
+          // Try on-chain re-analyze with fresh wallet session
+          const newResult = await analyzeContract(data.fixed_code, freshAddress, network);
+          setResult(newResult);
+          if (freshAddress !== walletAddress) {
+            setWalletAddress(freshAddress); // sync React state
+          }
+          logGL("ACTION ✅ Fix: auto re-analyze complete (on-chain)", { riskLevel: newResult.risk_level });
+        } else {
+          // Wallet disconnected during long fix — use client-side
+          const newResult = await analyzeContract(data.fixed_code, null, network);
+          setResult(newResult);
+          logGL("ACTION ✅ Fix: auto re-analyze complete (client-side, wallet disconnected)", { riskLevel: newResult.risk_level });
+        }
       } catch (reErr: unknown) {
         const reMsg = reErr instanceof Error ? reErr.message : "";
         if (reMsg.includes("Transaction cancelled") || reMsg.includes("user rejected")) {
-          // Toast only — keep existing results
           setFixToast("Re-analysis cancelled — approve the wallet popup to continue.");
           setTimeout(() => setFixToast(null), 5000);
+          logGL("ACTION ✘ Fix: re-analyze rejected by user", {});
         } else {
-          setResult(null);
+          // On-chain re-analyze failed (stale session) — graceful fallback to client-side
+          logGL("ACTION ⚠️ Fix: on-chain re-analyze failed, falling back to client-side", { error: reMsg });
+          try {
+            const fallbackResult = await analyzeContract(data.fixed_code, null, network);
+            setResult(fallbackResult);
+            logGL("ACTION ✅ Fix: auto re-analyze complete (client-side fallback)", { riskLevel: fallbackResult.risk_level });
+          } catch {
+            setResult(null);
+            logGL("ACTION ❌ Fix: re-analyze failed completely", {});
+          }
         }
-        logGL("ACTION ❌ Fix: auto re-analyze failed", {});
       } finally {
         setIsLoading(false);
       }
