@@ -263,7 +263,10 @@ function deriveHeuristicAnalysis(
   } else if ((core.hasAI || core.hasExternalCalls) && !core.usesEqPrinciple) {
     determinismRisk = "HIGH";
   } else if (core.hasAI && core.usesEqPrinciple) {
-    determinismRisk = "MEDIUM";
+    // Check if prompts are strictly constrained — if so, risk is LOW
+    const dPrompts = extractPrompts(code);
+    const hasStrict = dPrompts.some(isPromptConstrained);
+    determinismRisk = hasStrict ? "LOW" : "MEDIUM";
   }
 
   // STRICT consensus risk
@@ -279,10 +282,11 @@ function deriveHeuristicAnalysis(
     const OPEN_ENDED = /\b(describe|explain|tell me|what do you think|summarize in your own words|discuss|analyze in detail|write a paragraph|give your opinion|how would you|random|anything|interesting|creative)\b/i;
     const hasOpenEnded = prompts.some(p => OPEN_ENDED.test(p));
 
-    // Strict output constraints override open-ended keywords
-    if (hasOpenEnded && !hasStrictConstraint) {
-      consensusRisk = "HIGH";
-    } else if (!hasStrictConstraint) {
+    // Strict output constraints ALWAYS override open-ended keywords.
+    // e.g. "Return ONLY valid JSON... Input: {user_text}" is constrained despite containing dynamic text
+    if (hasStrictConstraint) {
+      consensusRisk = "LOW";
+    } else if (hasOpenEnded) {
       consensusRisk = "HIGH";
     } else {
       consensusRisk = "MEDIUM";
