@@ -127,30 +127,30 @@ export function fixGenLayerContract(code: string): FixResult {
         // Extract the full exec_prompt(...) call content
         const fullCall = callLines.join("\n");
 
-        // ─── Smart task/criteria generation based on prompt content ───
+        // ─── Strict task/criteria generation — forces byte-identical output ───
         const promptLower = fullCall.toLowerCase();
         let task: string;
         let criteria: string;
 
         if (/\b(classify|categor|sentiment|positive|negative|label)\b/.test(promptLower)) {
           task = "classification";
-          criteria = "output must be exactly one of the defined categories with no extra text";
+          criteria = "output must be byte-identical raw JSON with exactly these keys in this order: {\\\"category\\\": \\\"<string>\\\", \\\"confidence\\\": <int 0-100>}. No markdown. No explanation. No text before or after the JSON object. Validators MUST produce identical output.";
         } else if (/\b(yes|no|true|false|approve|reject|valid|invalid)\b/.test(promptLower) &&
                    /\b(one word|single word|only)\b/.test(promptLower)) {
           task = "binary decision";
-          criteria = "output must be exactly YES or NO with no extra text";
+          criteria = "output must be byte-identical raw JSON with exactly these keys in this order: {\\\"decision\\\": \\\"YES\\\" or \\\"NO\\\"}. No markdown. No explanation. No text before or after the JSON object. Validators MUST produce identical output.";
         } else if (/\b(number|price|amount|count|score|rating|percent)\b/.test(promptLower)) {
           task = "numeric extraction";
-          criteria = "output must be an identical number with no extra text";
+          criteria = "output must be byte-identical raw JSON with exactly these keys in this order: {\\\"value\\\": <number>}. No markdown. No explanation. No text before or after the JSON object. Validators MUST produce identical output.";
         } else if (/\b(json|structure|object|array|\{.*\})\b/.test(promptLower)) {
           task = "structured data extraction";
-          criteria = "output must be identical raw JSON with matching keys, values, and no extra text";
+          criteria = "output must be byte-identical raw JSON with matching keys in deterministic order, identical values, no whitespace variation. No markdown. No explanation. No text before or after the JSON object. Validators MUST produce identical output.";
         } else if (/\b(summarize|summary|explain|describe)\b/.test(promptLower)) {
           task = "summarization";
-          criteria = "output must be identical raw JSON with keys: summary (str), key_points (list of str)";
+          criteria = "output must be byte-identical raw JSON with exactly these keys in this order: {\\\"summary\\\": \\\"<string>\\\", \\\"key_points\\\": [\\\"<string>\\\"]}. No markdown. No explanation. No text before or after the JSON object. Validators MUST produce identical output.";
         } else {
           task = "AI processing";
-          criteria = "output must be identical raw JSON with no markdown, no explanation, no extra text";
+          criteria = "output must be byte-identical raw JSON. No markdown fencing. No explanation. No preamble. No text before or after the JSON object. All keys in deterministic alphabetical order. Validators MUST produce identical output.";
         }
 
         if (assignMatch) {
@@ -178,7 +178,7 @@ export function fixGenLayerContract(code: string): FixResult {
             `${indent}    criteria="${criteria}"`,
             `${indent})`
           );
-          changes.push(`🔧 Wrapped return AI call with \`gl.eq_principle.prompt_non_comparative\` (${task.toLowerCase()})`);
+          changes.push(`🔧 Wrapped return AI call with \`gl.eq_principle.prompt_non_comparative\` (${task.toLowerCase()}, strict byte-identical)`);
         }
 
         i = j; // Skip past the collected lines
@@ -760,13 +760,17 @@ export function fixGenLayerContract(code: string): FixResult {
 
   ///////////////////////////////////////////
   // RULE 13 — Make vague AI prompts strict
-  //           (critical for consensus — validators must produce identical output)
+  //           (CRITICAL for consensus — validators MUST produce byte-identical output)
+  //           Uses aggressive JSON-only constraints to eliminate LLM variation
   ///////////////////////////////////////////
 
   {
     const promptBefore = fixed;
     const promptLines = fixed.split("\n");
     const strictPromptLines: string[] = [];
+
+    // Shared preamble enforced on ALL generated prompts
+    const STRICT_PREAMBLE = "Return ONLY the raw JSON object. No markdown. No code fencing. No explanation. No preamble. No trailing text. Output must start with { and end with }. Every validator must produce byte-identical output.";
 
     for (let i = 0; i < promptLines.length; i++) {
       const line = promptLines[i];
@@ -778,9 +782,10 @@ export function fixGenLayerContract(code: string): FixResult {
         const promptText = execMatch[1];
         const promptLower = promptText.toLowerCase();
 
-        // Check if the prompt is already strict (has JSON formatting instructions)
+        // Check if the prompt is already strict (has strong JSON formatting instructions)
         const isAlreadyStrict =
           promptLower.includes("return only") &&
+          promptLower.includes("byte-identical") &&
           (promptLower.includes("json") || promptLower.includes("valid json"));
 
         if (!isAlreadyStrict) {
@@ -793,14 +798,16 @@ export function fixGenLayerContract(code: string): FixResult {
           // Detect the intent to pick the right strict template
           let strictPrompt: string;
           if (/\b(classify|categor|sentiment|label)\b/.test(promptLower)) {
-            strictPrompt = `f"You are a strict classifier. Return ONLY the JSON object, nothing else. No markdown, no explanation. JSON format: {{\\"category\\": \\"<string>\\", \\"confidence\\": <int 0-100>}}. Input: ${inputRef}"`;
+            strictPrompt = `f"${STRICT_PREAMBLE} Exact JSON schema (keys in this order): {{\\"category\\": \\"<lowercase_single_word>\\", \\"confidence\\": <integer_0_to_100>}}. Do not add any other keys. Input: ${inputRef}"`;
           } else if (/\b(yes|no|true|false|approve|reject)\b/.test(promptLower)) {
-            strictPrompt = `f"Return ONLY the JSON object, nothing else. No markdown, no explanation. JSON format: {{\\"decision\\": \\"YES or NO\\", \\"reason\\": \\"<string>\\"}}. Input: ${inputRef}"`;
+            strictPrompt = `f"${STRICT_PREAMBLE} Exact JSON schema (keys in this order): {{\\"decision\\": \\"YES\\" or \\"NO\\"}}. Use exactly YES or NO, uppercase, no other value. Do not add any other keys. Input: ${inputRef}"`;
           } else if (/\b(number|price|amount|score|rating)\b/.test(promptLower)) {
-            strictPrompt = `f"Return ONLY the JSON object, nothing else. No markdown, no explanation. JSON format: {{\\"value\\": <number>, \\"unit\\": \\"<string>\\"}}. Input: ${inputRef}"`;
+            strictPrompt = `f"${STRICT_PREAMBLE} Exact JSON schema (keys in this order): {{\\"value\\": <number_no_commas>}}. Output the number as a plain decimal (e.g. 42.5). Do not add any other keys. Input: ${inputRef}"`;
+          } else if (/\b(summarize|summary|explain|describe)\b/.test(promptLower)) {
+            strictPrompt = `f"${STRICT_PREAMBLE} Exact JSON schema (keys in this order): {{\\"summary\\": \\"<one_sentence_max_20_words>\\"}}. Keep summary deterministic and factual. Do not add any other keys. Input: ${inputRef}"`;
           } else {
-            // General strict prompt — covers "Do something with", summarization, etc.
-            strictPrompt = `f"Return ONLY the JSON object, nothing else before or after. No markdown, no explanation, no extra text whatsoever. JSON format: {{\\"summary\\": \\"<string>\\", \\"category\\": \\"<string>\\", \\"confidence\\": <int 0-100>}}. Input: ${inputRef}"`;
+            // General strict prompt — covers all other AI tasks
+            strictPrompt = `f"${STRICT_PREAMBLE} Exact JSON schema (keys in alphabetical order): {{\\"category\\": \\"<lowercase_single_word>\\", \\"confidence\\": <integer_0_to_100>, \\"result\\": \\"<one_sentence_max_20_words>\\"}}. Do not add any other keys. Input: ${inputRef}"`;
           }
 
           // Replace the exec_prompt line with the strict version
@@ -817,7 +824,7 @@ export function fixGenLayerContract(code: string): FixResult {
 
     fixed = strictPromptLines.join("\n");
     if (fixed !== promptBefore) {
-      changes.push("🔧 Replaced vague AI prompt(s) with strict JSON-only format (consensus-safe)");
+      changes.push("🔧 Replaced vague AI prompt(s) with strict byte-identical JSON-only format (consensus-hardened)");
     }
   }
 
