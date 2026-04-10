@@ -134,23 +134,23 @@ export function fixGenLayerContract(code: string): FixResult {
 
         if (/\b(classify|categor|sentiment|positive|negative|label)\b/.test(promptLower)) {
           task = "classification";
-          criteria = "output must be byte-identical raw JSON with exactly these keys in this order: {\\\"category\\\": \\\"<string>\\\", \\\"confidence\\\": <int 0-100>}. No markdown. No explanation. No text before or after the JSON object. Validators MUST produce identical output.";
+          criteria = "Approve if output is valid JSON with exactly keys 'category' (lowercase string) and 'confidence' (integer 0-100), no other keys, no markdown, no extra text. Reject otherwise.";
         } else if (/\b(yes|no|true|false|approve|reject|valid|invalid)\b/.test(promptLower) &&
                    /\b(one word|single word|only)\b/.test(promptLower)) {
           task = "binary decision";
-          criteria = "output must be byte-identical raw JSON with exactly these keys in this order: {\\\"decision\\\": \\\"YES\\\" or \\\"NO\\\"}. No markdown. No explanation. No text before or after the JSON object. Validators MUST produce identical output.";
+          criteria = "Approve if output is valid JSON with exactly one key 'decision' whose value is exactly 'YES' or 'NO', no other keys, no markdown, no extra text. Reject otherwise.";
         } else if (/\b(number|price|amount|count|score|rating|percent)\b/.test(promptLower)) {
           task = "numeric extraction";
-          criteria = "output must be byte-identical raw JSON with exactly these keys in this order: {\\\"value\\\": <number>}. No markdown. No explanation. No text before or after the JSON object. Validators MUST produce identical output.";
+          criteria = "Approve if output is valid JSON with exactly one key 'value' (a number), no other keys, no markdown, no extra text. Reject otherwise.";
         } else if (/\b(json|structure|object|array|\{.*\})\b/.test(promptLower)) {
           task = "structured data extraction";
-          criteria = "output must be byte-identical raw JSON with matching keys in deterministic order, identical values, no whitespace variation. No markdown. No explanation. No text before or after the JSON object. Validators MUST produce identical output.";
+          criteria = "Approve if output is valid JSON with keys in deterministic order, no markdown, no extra text. Reject otherwise.";
         } else if (/\b(summarize|summary|explain|describe)\b/.test(promptLower)) {
           task = "summarization";
-          criteria = "output must be byte-identical raw JSON with exactly these keys in this order: {\\\"summary\\\": \\\"<string>\\\", \\\"key_points\\\": [\\\"<string>\\\"]}. No markdown. No explanation. No text before or after the JSON object. Validators MUST produce identical output.";
+          criteria = "Approve if output is valid JSON with keys 'summary' (string) and 'key_points' (array of strings), no other keys, no markdown, no extra text. Reject otherwise.";
         } else {
           task = "AI processing";
-          criteria = "output must be byte-identical raw JSON. No markdown fencing. No explanation. No preamble. No text before or after the JSON object. All keys in deterministic alphabetical order. Validators MUST produce identical output.";
+          criteria = "Approve if output is valid JSON starting with { and ending with }, contains only allowed keys in alphabetical order, no markdown, no extra text. Reject otherwise.";
         }
 
         if (assignMatch) {
@@ -275,7 +275,7 @@ export function fixGenLayerContract(code: string): FixResult {
             `${indent}${varName} = gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
             `${indent}    task="external data fetch",`,
-            `${indent}    criteria="response body must be byte-identical across all validators"`,
+            `${indent}    criteria="Approve if response is valid non-empty text or JSON. Reject if empty or error."`,
             `${indent})`
           );
           changes.push(`🔧 Wrapped \`${varName}\` web call with \`gl.eq_principle.prompt_non_comparative\``);
@@ -287,7 +287,7 @@ export function fixGenLayerContract(code: string): FixResult {
             `${indent}return gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
             `${indent}    task="external data fetch",`,
-            `${indent}    criteria="response body must be byte-identical across all validators"`,
+            `${indent}    criteria="Approve if response is valid non-empty text or JSON. Reject if empty or error."`,
             `${indent})`
           );
           changes.push(`🔧 Wrapped return web call with \`gl.eq_principle.prompt_non_comparative\``);
@@ -770,7 +770,7 @@ export function fixGenLayerContract(code: string): FixResult {
     const strictPromptLines: string[] = [];
 
     // Shared preamble enforced on ALL generated prompts
-    const STRICT_PREAMBLE = "Return ONLY the raw JSON object. No markdown. No code fencing. No explanation. No preamble. No trailing text. Output must start with { and end with }. Every validator must produce byte-identical output.";
+    const STRICT_PREAMBLE = "Return ONLY the raw JSON object. No markdown. No code fencing. No explanation. No preamble. No trailing text. Output must start with { and end with }.";
 
     for (let i = 0; i < promptLines.length; i++) {
       const line = promptLines[i];

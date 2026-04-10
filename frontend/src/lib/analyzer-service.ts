@@ -1548,31 +1548,25 @@ export async function fixContract(code: string, walletAddress?: string | null, n
         data = safeParseJSON(String(resultStr));
       }
 
-      // ─── v5: AI returns fix categories, not patches ───
+      // ─── v6: AI returns minimal fix categories (category + severity only) ───
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const aiCategories: Array<{category: string; description: string; severity: string; priority: number}> = Array.isArray(data.fixes) ? data.fixes : [];
-      const aiSummary = typeof data.summary === "string" ? data.summary : "";
-      const aiConfidence = typeof data.confidence === "string" ? data.confidence : "UNKNOWN";
+      const aiCategories: Array<{category: string; severity: string}> = Array.isArray(data.fixes) ? data.fixes : [];
 
       logGL("FIX → AI CATEGORIES", {
         categoryCount: aiCategories.length,
         categories: aiCategories.map(c => c.category),
-        summary: aiSummary,
-        confidence: aiConfidence,
       });
 
       if (aiCategories.length > 0) {
         // Merge AI insights into the rule fix — AI adds context, rules apply code changes
         const aiInsights: string[] = aiCategories
-          .sort((a, b) => (a.priority || 99) - (b.priority || 99))
-          .map(c => `🤖 AI [${c.severity}]: ${c.description} (${c.category})`);
+          .map(c => `🤖 AI [${c.severity}]: ${c.category}`);
 
         return {
           ...ruleFix,
           changes_made: [
             ...ruleFix.changes_made.filter(c => !c.startsWith("✅ Contract is already")),
             ...aiInsights,
-            ...(aiSummary ? [`📋 AI Summary: ${aiSummary}`] : []),
           ],
           method: "rules+ai-categories",
           execution: computeTrust("CLIENT_DETERMINISTIC"),

@@ -36,8 +36,8 @@ export interface ContractMethodSpec {
  */
 export const CONTRACT_METHODS: Record<string, ContractMethodSpec> = {
   analyze_contract: {
-    args: ["summary"],
-    maxPayload: 500,     // contract does summary[:500]
+    args: ["source_code"],
+    maxPayload: 4000,    // contract does source_code[:4000]
     readMethod: "get_last_analysis",
     returns: "json",
   },
@@ -54,9 +54,9 @@ export const CONTRACT_METHODS: Record<string, ContractMethodSpec> = {
     returns: "word",     // returns "GOOD" or "BAD"
   },
   fix_contract: {
-    args: ["issues"],
-    maxPayload: 400,     // contract does issues[:400]
-    readMethod: "get_last_analysis",
+    args: ["source_code", "analysis_summary"],
+    maxPayload: 4000,    // contract does source_code[:4000]
+    readMethod: "get_last_fix",
     returns: "json",
   },
 };

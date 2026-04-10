@@ -70,8 +70,20 @@ class AIContractDebugger(gl.Contract):
                 "\"reasoning\": \"2-3 sentence analysis explaining the key findings\", "
                 "\"fix_suggestions\": [\"actionable suggestion 1\", \"actionable suggestion 2\"]}"
             ),
-            task="Perform comprehensive security audit of a GenLayer intelligent contract.",
-            criteria="Output must be valid JSON with all required fields: risk_level, issues array, warnings array, prompt_quality, determinism_risk, consensus_risk, reasoning, fix_suggestions array."
+            task="Security audit of GenLayer contract.",
+            criteria=(
+                "Approve ONLY if ALL are true: "
+                "(1) Output is parseable JSON starting with { and ending with }. "
+                "(2) Has key 'risk_level' with value exactly 'LOW', 'MEDIUM', or 'HIGH'. "
+                "(3) Has key 'issues' that is an array. "
+                "(4) Has key 'warnings' that is an array. "
+                "(5) Has key 'prompt_quality' with value exactly 'LOW', 'MEDIUM', 'HIGH', or 'N/A'. "
+                "(6) Has key 'determinism_risk' with value exactly 'LOW', 'MEDIUM', or 'HIGH'. "
+                "(7) Has key 'consensus_risk' with value exactly 'LOW', 'MEDIUM', or 'HIGH'. "
+                "(8) Has key 'reasoning' that is a non-empty string. "
+                "(9) Has key 'fix_suggestions' that is an array. "
+                "Reject if ANY condition fails."
+            )
         )
 
         self.last_analysis = result
@@ -144,8 +156,8 @@ class AIContractDebugger(gl.Contract):
                 "<previous_analysis>\n" + context + "\n</previous_analysis>\n\n"
                 "Return ONLY valid JSON with this EXACT structure:\n"
                 "{\"fixes\": [\n"
-                "  {\"category\": \"CATEGORY_ID\", \"description\": \"short fix description\", \"severity\": \"ERROR or WARNING\", \"priority\": 1}\n"
-                "], \"summary\": \"one sentence summary\", \"confidence\": \"HIGH or MEDIUM or LOW\"}\n\n"
+                "  {\"category\": \"CATEGORY_ID\", \"severity\": \"ERROR or WARNING\"}\n"
+                "]}\n\n"
                 "VALID CATEGORY IDs (use ONLY these exact strings):\n"
                 "- wrong_inheritance: Class does not inherit from gl.Contract\n"
                 "- wrong_exec_prompt: Uses gl.exec_prompt instead of gl.nondet.exec_prompt\n"
@@ -162,13 +174,25 @@ class AIContractDebugger(gl.Contract):
                 "- no_contract_class: No contract class found\n\n"
                 "RULES:\n"
                 "- Only include categories for issues that ACTUALLY EXIST in the code\n"
-                "- Priority 1 = most critical, higher numbers = less critical\n"
-                "- Keep descriptions under 20 words each\n"
                 "- Do NOT invent new category IDs\n"
+                "- Do NOT add any extra fields like description, priority, summary, or confidence\n"
                 "Return ONLY valid JSON. No markdown, no code blocks."
             ),
-            task="Categorize issues in a GenLayer contract and prioritize fixes.",
-            criteria="Output must be valid JSON with fixes array containing only valid category IDs, short descriptions, severity, and priority numbers."
+            task="List issue categories in contract.",
+            criteria=(
+                "Approve ONLY if ALL are true: "
+                "(1) Output is parseable JSON starting with { and ending with }. "
+                "(2) Has exactly one top-level key: 'fixes'. "
+                "(3) 'fixes' is an array. "
+                "(4) Each element has 'category' (string) and 'severity' (string). "
+                "(5) Each 'severity' is exactly 'ERROR' or 'WARNING'. "
+                "(6) Each 'category' is one of: wrong_inheritance, wrong_exec_prompt, "
+                "missing_eq_principle, dangerous_import, dangerous_external_call, "
+                "missing_decorator, missing_depends_header, python_int_type, "
+                "python_dict_type, python_list_type, missing_type_annotation, "
+                "weak_prompt, no_contract_class. "
+                "Reject if ANY condition fails."
+            )
         )
 
         self.last_fix = result
