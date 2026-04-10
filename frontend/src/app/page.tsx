@@ -136,7 +136,7 @@ export default function Home() {
     if (/insufficient funds|not enough.*balance/i.test(raw))
       return "Your wallet doesn't have enough funds to pay for this transaction.";
     if (/timeout|timed out/i.test(raw))
-      return "The network took too long to respond. Try again — Studio validators usually finish in ~35 seconds.";
+      return "The AI analysis is taking longer than expected. Validators may need 3–15 minutes to reach consensus — please try again.";
     if (/no wallet|install.*metamask|install.*rabby/i.test(raw))
       return "No wallet detected. Please install Rabby or MetaMask and refresh the page.";
     return raw;
@@ -405,6 +405,7 @@ export default function Home() {
       logGL("ACTION → Fix: auto re-analyze starting", { fixedCodeLength: data.fixed_code.length });
       setIsLoading(true);
       setActivePanel("results");
+      setFixToast("Running on-chain AI analysis… This can take 3–15 minutes due to validator consensus. Please wait.");
       try {
         // Re-fetch fresh wallet address — the one in state may be stale after 8 min fix TX
         const freshAddress = await getConnectedAddress();
@@ -431,6 +432,7 @@ export default function Home() {
         } else {
           // On-chain re-analyze failed (stale session) — graceful fallback to client-side
           logGL("ACTION ⚠️ Fix: on-chain re-analyze failed, falling back to client-side", { error: reMsg });
+          setFixToast("On-chain analysis took too long. Showing fast client-side result.");
           try {
             const fallbackResult = await analyzeContract(data.fixed_code, null, network);
             setResult(fallbackResult);
