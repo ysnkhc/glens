@@ -31,39 +31,42 @@ class AIContractDebugger(gl.Contract):
                 "You are a GenLayer Intelligent Contract security auditor. "
                 "Analyze the following Python contract source code for GenLayer-specific issues.\n\n"
                 "<source_code>\n" + code + "\n</source_code>\n\n"
-                "CHECK THESE RULES:\n\n"
+                "CHECK EACH RULE below independently. For each rule, check if it PASSES or FAILS based on the source code.\n\n"
+                "CRITICAL INSTRUCTION: The pattern 'gl.eq_principle.prompt_non_comparative(lambda: gl.nondet.exec_prompt(...), task=..., criteria=...)' is the CORRECT GenLayer pattern. "
+                "If you see gl.nondet.exec_prompt INSIDE a lambda INSIDE gl.eq_principle or gl.eq_principle.prompt_non_comparative, that rule PASSES. Do NOT flag it.\n\n"
                 "ERRORS (contract will fail on-chain):\n"
-                "- wrong_inheritance: Class must inherit from gl.Contract. PASSES if '(gl.Contract)' appears in any class definition\n"
-                "- wrong_exec_prompt: gl.exec_prompt does NOT exist. Must use gl.nondet.exec_prompt(). PASSES if only gl.nondet.exec_prompt is used (no bare gl.exec_prompt)\n"
-                "- dangerous_import: import requests, urllib, httpx, aiohttp are FORBIDDEN. PASSES if none of these imports exist, even if gl.nondet.web is used (that is correct)\n"
-                "- dangerous_external_call: requests.get(), urllib.request, httpx.get(), fetch() are FORBIDDEN. PASSES if only gl.nondet.web.get/post is used. gl.nondet.web.get() inside eq_principle is the CORRECT pattern — do NOT flag it\n"
-                "- missing_eq_principle: Non-deterministic calls must be inside gl.eq_principle. PASSES if every gl.nondet.exec_prompt and gl.nondet.web call is wrapped in gl.eq_principle or gl.eq_principle.prompt_non_comparative\n"
+                "- wrong_inheritance: FAILS only if the class does NOT have (gl.Contract) in its definition. PASSES if you see 'class SomeName(gl.Contract)'.\n"
+                "- wrong_exec_prompt: FAILS only if code uses bare 'gl.exec_prompt(' without '.nondet'. PASSES if all exec_prompt calls are 'gl.nondet.exec_prompt('.\n"
+                "- dangerous_import: FAILS only if code has 'import requests' or 'import urllib' or 'import httpx' or 'import aiohttp'. PASSES if none of those import lines exist.\n"
+                "- dangerous_external_call: FAILS only if code calls requests.get(), requests.post(), urllib.request, httpx.get(), or fetch(). PASSES if only gl.nondet.web.get() or gl.nondet.web.post() is used.\n"
+                "- missing_eq_principle: FAILS only if gl.nondet.exec_prompt or gl.nondet.web appears OUTSIDE of gl.eq_principle. PASSES if every gl.nondet call is inside gl.eq_principle() or gl.eq_principle.prompt_non_comparative(lambda: ...). The lambda wrapping pattern is CORRECT.\n"
                 "- decorated_constructor: __init__ must NOT have @gl.public.write or @gl.public.view decorator\n"
                 "- no_contract_class: No class definition found that could be a contract\n\n"
                 "WARNINGS:\n"
-                "- missing_depends_header: First line must start with # { \"Depends\": \"py-genlayer: followed by any hash or 'latest'. PASSES if first line contains # { \"Depends\":\n"
-                "- missing_return_type: Public methods should have return type annotations (-> str, -> None). PASSES if all def lines have ->\n"
+                "- missing_depends_header: First line should start with '# { \"Depends\":'. PASSES if the first non-empty line contains '# { \"Depends\":'.\n"
+                "- missing_return_type: Public methods should have -> type annotations. PASSES if all def lines have ->.\n"
                 "- missing_param_type: Method parameters (except self) should have type annotations\n"
                 "- python_int_type: State variables should use u256 or i256, not Python int\n"
                 "- python_dict_type: State variables should use TreeMap[K,V], not Python dict\n"
                 "- python_list_type: State variables should use DynArray[T], not Python list\n\n"
-                "RISK SCORING RULES:\n"
-                "- HIGH: Any ERROR found, OR open-ended AI prompts without JSON constraints, OR AI calls outside eq_principle\n"
-                "- MEDIUM: Only warnings (no errors), OR AI prompts with partial constraints\n"
-                "- LOW: Zero errors + eq_principle used everywhere + prompts contain 'Return ONLY' or 'JSON' or 'Exact JSON schema' + correct APIs\n\n"
-                "PROMPT QUALITY (assess any AI prompts found in exec_prompt calls):\n"
-                "- HIGH: Output strictly constrained — prompt contains words like ONLY, EXACT, JSON, schema, 'no markdown', 'no extra text', or specifies exact keys\n"
-                "- MEDIUM: Somewhat constrained but output could vary between validators\n"
-                "- LOW: Open-ended (describe, explain, discuss, creative, tell me, summarize, what do you think)\n"
-                "- If no AI prompts exist, set prompt_quality to N/A\n\n"
+                "RISK SCORING:\n"
+                "- LOW: Zero errors AND all gl.nondet calls are inside eq_principle AND prompts contain strict output constraints (ONLY, JSON, Exact, schema)\n"
+                "- MEDIUM: Only warnings, no errors. Or prompts have partial constraints.\n"
+                "- HIGH: Any ERROR found, OR gl.nondet calls outside eq_principle, OR completely open-ended prompts\n\n"
+                "PROMPT QUALITY:\n"
+                "- HIGH: Prompts contain 'Return ONLY', 'Exact JSON', 'JSON schema', 'no markdown', 'no extra text', or specify exact output keys\n"
+                "- MEDIUM: Somewhat constrained but output could vary\n"
+                "- LOW: Open-ended (describe, explain, discuss, creative, tell me, summarize)\n"
+                "- N/A: No AI prompts in the contract\n\n"
                 "DETERMINISM RISK:\n"
-                "- HIGH: Uses external data sources, open-ended AI, or non-deterministic logic without proper wrapping\n"
-                "- MEDIUM: Uses AI with eq_principle but outputs could still vary\n"
-                "- LOW: Fully deterministic or properly wrapped with strict output constraints\n\n"
+                "- LOW: All non-deterministic calls properly wrapped in eq_principle with strict constraints\n"
+                "- MEDIUM: Wrapped but constraints are loose\n"
+                "- HIGH: Non-deterministic calls without wrapping\n\n"
                 "CONSENSUS RISK:\n"
-                "- HIGH: Validators will likely disagree (missing eq_principle, open-ended prompts, external calls without nondet)\n"
+                "- LOW: Validators will agree (eq_principle used, strict JSON constraints, proper APIs)\n"
                 "- MEDIUM: Validators might disagree on edge cases\n"
-                "- LOW: Validators will agree (strict constraints, eq_principle, proper APIs)\n\n"
+                "- HIGH: Validators will likely disagree\n\n"
+                "IMPORTANT: Only add issues/warnings for rules that actually FAIL. If a rule PASSES, do NOT include it.\n\n"
                 "Return this EXACT JSON structure (no markdown, no code blocks, ONLY valid JSON):\n"
                 "{\"risk_level\": \"LOW or MEDIUM or HIGH\", "
                 "\"issues\": [{\"rule\": \"rule_id\", \"severity\": \"ERROR\", \"message\": \"human readable description\", \"line\": line_number_or_0}], "
@@ -129,7 +132,7 @@ class AIContractDebugger(gl.Contract):
             import re
             words = re.findall(r'[A-Za-z0-9]+', raw.strip())
             if not words:
-                raise Exception("Empty LLM output — rotate this validator")
+                raise Exception("Empty LLM output -- rotate this validator")
             first_word = words[0].upper()
             return first_word
 
@@ -147,7 +150,7 @@ class AIContractDebugger(gl.Contract):
     def fix_contract(self, source_code: str, analysis_summary: str) -> str:
         """Analyze contract issues and return structured fix categories.
         Returns small, consensus-friendly JSON with issue categories
-        and short fix descriptions — NOT full code or find/replace patches.
+        and short fix descriptions -- NOT full code or find/replace patches.
         The client-side rule engine applies fixes deterministically.
         """
         code = source_code[:4000]
@@ -169,7 +172,7 @@ class AIContractDebugger(gl.Contract):
                 "- dangerous_import: Uses requests/urllib/httpx instead of gl.nondet.web\n"
                 "- dangerous_external_call: Uses requests.get/post instead of gl.nondet.web.get\n"
                 "- missing_decorator: Public methods missing @gl.public.write or @gl.public.view\n"
-                "- missing_depends_header: First line does NOT start with # { \"Depends\": \"py-genlayer:\" — if it does, do NOT flag this\n"
+                "- missing_depends_header: First line does NOT start with # { \"Depends\": \"py-genlayer:\" -- if it does, do NOT flag this\n"
                 "- python_int_type: Uses int instead of u256/i256\n"
                 "- python_dict_type: Uses dict instead of TreeMap\n"
                 "- python_list_type: Uses list instead of DynArray\n"
