@@ -1148,6 +1148,50 @@ export function fixGenLayerContract(code: string): FixResult {
   }
 
   ///////////////////////////////////////////
+  // CORRUPTION GUARD — Prevent prompt/instruction text from leaking into output
+  ///////////////////////////////////////////
+
+  {
+    const CORRUPTION_PATTERNS = [
+      "Claude",
+      "we are very close",
+      "regression",
+      "**Task:**",
+      "**Claude",
+      "USER_REQUEST",
+      "ADDITIONAL_METADATA",
+      "```typescript",
+      "```python\n//",
+      "Rule 5b",
+      "Rule 5c",
+      "HARDENED",
+      "audit the entire",
+      "give me the patched",
+      "urgent regression",
+    ];
+
+    const fixedLower = fixed.toLowerCase();
+    const isCorrupted = CORRUPTION_PATTERNS.some(p => fixedLower.includes(p.toLowerCase()));
+
+    // Also check: valid Python must contain at least one "class" or "def" or "import" keyword
+    const looksLikePython = /\b(class|def|import|from)\b/.test(fixed);
+
+    if (isCorrupted || !looksLikePython) {
+      console.error("🔴 FIXER CORRUPTION DETECTED — resetting to original code", {
+        isCorrupted,
+        looksLikePython,
+        first80: fixed.slice(0, 80),
+      });
+      return {
+        fixedCode: code,
+        changes: ["⚠️ Fixer output was corrupted — returned original code unchanged."],
+        validAfterFix: false,
+        remainingIssues: 1,
+      };
+    }
+  }
+
+  ///////////////////////////////////////////
   // POST-FIX VALIDATION
   ///////////////////////////////////////////
 
