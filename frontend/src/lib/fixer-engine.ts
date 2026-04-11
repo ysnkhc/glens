@@ -1146,103 +1146,6 @@ export function fixGenLayerContract(code: string): FixResult {
       }
     }
   }
-  ///////////////////////////////////////////
-  // FINAL SANITIZATION — Strip any non-Python content that may have
-  // leaked from template literals, build artifacts, or cached deploys.
-  // This is the LAST transform before validation.
-  ///////////////////////////////////////////
-
-  {
-    // 1. Strip known poison patterns (prompt fragments, markdown, instructions)
-    const POISON_REGEXES: RegExp[] = [
-      /^\s*\*{0,2}Claude[^]*?(?=\n\s*(?:#|from |class |def |import ))/i,
-      /we are very close[^]*?(?=\n\s*(?:#|from |class |def |import ))/i,
-      /urgent regression[^]*?(?=\n\s*(?:#|from |class |def |import ))/i,
-      /\*\*Task:\*\*[^]*?(?=\n\s*(?:#|from |class |def |import ))/i,
-      /\*\*Claude[^]*?(?=\n\s*(?:#|from |class |def |import ))/i,
-      /```(?:typescript|python|javascript)[^]*?```/g,
-      /USER_REQUEST[^]*?(?=\n\s*(?:#|from |class |def |import ))/i,
-      /ADDITIONAL_METADATA[^]*?(?=\n\s*(?:#|from |class |def |import ))/i,
-      /Rule 5[bc][^]*?(?=\n\s*(?:#|from |class |def |import ))/i,
-      /HARDENED[^]*?(?=\n\s*(?:#|from |class |def |import ))/i,
-      /audit the entire[^]*?(?=\n\s*(?:#|from |class |def |import ))/i,
-      /give me the (?:patched|updated)[^]*?(?=\n\s*(?:#|from |class |def |import ))/i,
-    ];
-
-    for (const rx of POISON_REGEXES) {
-      fixed = fixed.replace(rx, "");
-    }
-
-    // 2. Remove any lines that are clearly not Python
-    //    (markdown headers, bullet points, backtick fences, HTML tags)
-    const sanitizedLines: string[] = [];
-    for (const line of fixed.split("\n")) {
-      const t = line.trim();
-      // Skip markdown/instruction lines
-      if (t.startsWith("```")) continue;
-      if (t.startsWith("##") || t.startsWith("**") && t.endsWith("**")) continue;
-      if (t.startsWith("- [ ]") || t.startsWith("- [x]")) continue;
-      if (t.startsWith("<") && t.endsWith(">") && !t.includes("=")) continue;
-      // Skip lines that look like AI/human chat
-      if (/^(Claude|Human|Assistant|USER|SYSTEM)\s*[,:]/i.test(t)) continue;
-      sanitizedLines.push(line);
-    }
-    fixed = sanitizedLines.join("\n");
-
-    // 3. Trim leading/trailing whitespace and blank lines
-    fixed = fixed.replace(/^\s*\n/, "").trimEnd() + "\n";
-
-    // 4. Enforce canonical start: must begin with # { "Depends" or "from genlayer"
-    //    If it starts with something else, find the first valid Python line and trim to there
-    const firstLine = fixed.split("\n")[0]?.trim() || "";
-    const startsValid =
-      firstLine.startsWith("#") ||
-      firstLine.startsWith("from ") ||
-      firstLine.startsWith("import ") ||
-      firstLine.startsWith("class ") ||
-      firstLine.startsWith("def ") ||
-      firstLine.startsWith('"""') ||
-      firstLine.startsWith("'''");
-
-    if (!startsValid) {
-      // Find the first line that looks like Python and trim everything before it
-      const lines = fixed.split("\n");
-      let pythonStart = -1;
-      for (let i = 0; i < lines.length; i++) {
-        const lt = lines[i].trim();
-        if (lt.startsWith("#") || lt.startsWith("from ") || lt.startsWith("import ") ||
-            lt.startsWith("class ") || lt.startsWith("def ") ||
-            lt.startsWith('"""') || lt.startsWith("'''")) {
-          pythonStart = i;
-          break;
-        }
-      }
-      if (pythonStart > 0) {
-        console.warn(`🟡 FIXER: Stripped ${pythonStart} non-Python lines from start of output`);
-        fixed = lines.slice(pythonStart).join("\n");
-      }
-    }
-
-    // 5. Final poison check — if STILL corrupted after sanitization, bail to original code
-    const HARD_POISON = ["claude,", "we are very close", "**task:**", "user_request", "urgent regression"];
-    const fixedLowerFinal = fixed.toLowerCase();
-    const stillPoisoned = HARD_POISON.some(p => fixedLowerFinal.includes(p));
-    const looksLikePython = /\b(class|def|import|from)\b/.test(fixed);
-
-    if (stillPoisoned || !looksLikePython) {
-      console.error("🔴 FIXER CORRUPTION — sanitization failed, returning original code", {
-        stillPoisoned,
-        looksLikePython,
-        first80: fixed.slice(0, 80),
-      });
-      return {
-        fixedCode: code,
-        changes: ["⚠️ Fixer output was corrupted — returned original code unchanged."],
-        validAfterFix: false,
-        remainingIssues: 1,
-      };
-    }
-  }
 
   ///////////////////////////////////////////
   // POST-FIX VALIDATION
@@ -1271,4 +1174,3 @@ export function fixGenLayerContract(code: string): FixResult {
     remainingIssues,
   };
 }
-

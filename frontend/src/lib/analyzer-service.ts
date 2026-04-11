@@ -399,34 +399,6 @@ function generateExplanation(code: string): string {
 function ruleBasedFix(code: string): FixResult {
   const result = fixGenLayerContract(code);
 
-  // ─── CORRUPTION GUARD ───────────────────────────────────────
-  // If the fixer output contains non-Python text (prompt fragments, markdown, etc.)
-  // immediately bail and return the original code.
-  const POISON_WORDS = ["claude", "we are very close", "regression", "**task:**", "user_request", "rule 5b", "rule 5c", "urgent"];
-  const fixedLower = result.fixedCode.toLowerCase();
-  const isPoisoned = POISON_WORDS.some(w => fixedLower.includes(w));
-  const looksLikePython = /\b(class|def|import|from)\b/.test(result.fixedCode);
-
-  if (isPoisoned || !looksLikePython) {
-    console.error("🔴 ruleBasedFix CORRUPTION GUARD — returning original code", {
-      isPoisoned,
-      looksLikePython,
-      first80: result.fixedCode.slice(0, 80),
-    });
-    const risk = scoreRisk(parseContract(code), runRules(parseContract(code), code), code);
-    return {
-      fixed_code: code,
-      changes_made: ["⚠️ Fixer output was corrupted — returned original code unchanged."],
-      method: "none",
-      before_risk: risk,
-      after_risk: risk,
-      improvement: { before: RISK_SCORES[risk], after: RISK_SCORES[risk], delta: 0, improved: false },
-      validAfterFix: false,
-      remainingIssues: 1,
-      execution: computeTrust("CLIENT_DETERMINISTIC"),
-    };
-  }
-
   // Re-analyze before fix for comparison
   const beforeParsed = parseContract(code);
   const beforeReport = runRules(beforeParsed, code);
