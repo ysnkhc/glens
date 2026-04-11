@@ -403,6 +403,10 @@ export default function Home() {
       // After a long fix_contract TX (4-8 min), the wallet session can go stale.
       // Re-fetch the wallet address to ensure it's still valid before the second TX.
       logGL("ACTION → Fix: auto re-analyze starting", { fixedCodeLength: data.fixed_code.length });
+      // IMPORTANT: Always use data.fixed_code here, NOT the React `code` state (which may be stale)
+      const codeToReanalyze = data.fixed_code;
+      console.log("AUTO RE-ANALYZE USING FIXED CODE (length:", codeToReanalyze.length, ") first 80 chars:", codeToReanalyze.slice(0, 80));
+      logGL("ACTION → AUTO RE-ANALYZE USING FIXED CODE", { length: codeToReanalyze.length, first80: codeToReanalyze.slice(0, 80) });
       setIsLoading(true);
       setActivePanel("results");
       setFixToast("Running on-chain AI analysis… This can take 3–15 minutes due to validator consensus. Please wait.");
@@ -411,7 +415,7 @@ export default function Home() {
         const freshAddress = await getConnectedAddress();
         if (freshAddress) {
           // Try on-chain re-analyze with fresh wallet session
-          const newResult = await analyzeContract(data.fixed_code, freshAddress, network);
+          const newResult = await analyzeContract(codeToReanalyze, freshAddress, network);
           setResult(newResult);
           if (freshAddress !== walletAddress) {
             setWalletAddress(freshAddress); // sync React state
@@ -419,7 +423,7 @@ export default function Home() {
           logGL("ACTION ✅ Fix: auto re-analyze complete (on-chain)", { riskLevel: newResult.risk_level });
         } else {
           // Wallet disconnected during long fix — use client-side
-          const newResult = await analyzeContract(data.fixed_code, null, network);
+          const newResult = await analyzeContract(codeToReanalyze, null, network);
           setResult(newResult);
           logGL("ACTION ✅ Fix: auto re-analyze complete (client-side, wallet disconnected)", { riskLevel: newResult.risk_level });
         }
@@ -434,7 +438,7 @@ export default function Home() {
           logGL("ACTION ⚠️ Fix: on-chain re-analyze failed, falling back to client-side", { error: reMsg });
           setFixToast("On-chain analysis took too long. Showing fast client-side result.");
           try {
-            const fallbackResult = await analyzeContract(data.fixed_code, null, network);
+            const fallbackResult = await analyzeContract(codeToReanalyze, null, network);
             setResult(fallbackResult);
             logGL("ACTION ✅ Fix: auto re-analyze complete (client-side fallback)", { riskLevel: fallbackResult.risk_level });
           } catch {
