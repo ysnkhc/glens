@@ -776,16 +776,17 @@ export function fixGenLayerContract(code: string): FixResult {
       const trimmed = line.trim();
 
       // Match any exec_prompt call with a vague/open-ended prompt
-      const execMatch = trimmed.match(/gl\.nondet\.exec_prompt\(\s*f?["'](.*)["']\s*\)/);
+      const execMatch = trimmed.match(/gl\.nondet\.exec_prompt\(\s*f?["'](.*?)["']\s*\)/);
       if (execMatch) {
         const promptText = execMatch[1];
         const promptLower = promptText.toLowerCase();
 
-        // Check if the prompt is already strict (has strong JSON formatting instructions)
+        // Check if the prompt already has strict JSON output constraints
         const isAlreadyStrict =
-          promptLower.includes("return only") &&
-          promptLower.includes("byte-identical") &&
-          (promptLower.includes("json") || promptLower.includes("valid json"));
+          (promptLower.includes("return only") && promptLower.includes("json")) ||
+          promptLower.includes("exact json schema") ||
+          promptLower.includes("raw json object") ||
+          promptLower.includes("no markdown");
 
         if (!isAlreadyStrict) {
           const indent = line.match(/^(\s*)/)?.[1] || "        ";
@@ -805,13 +806,13 @@ export function fixGenLayerContract(code: string): FixResult {
           } else if (/\b(summarize|summary|explain|describe)\b/.test(promptLower)) {
             strictPrompt = `f"${STRICT_PREAMBLE} Exact JSON schema (keys in this order): {{\\"summary\\": \\"<one_sentence_max_20_words>\\"}}. Keep summary deterministic and factual. Do not add any other keys. Input: ${inputRef}"`;
           } else {
-            // General strict prompt — covers all other AI tasks
-            strictPrompt = `f"${STRICT_PREAMBLE} Exact JSON schema (keys in alphabetical order): {{\\"category\\": \\"<lowercase_single_word>\\", \\"confidence\\": <integer_0_to_100>, \\"result\\": \\"<one_sentence_max_20_words>\\"}}. Do not add any other keys. Input: ${inputRef}"`;
+            // General strict prompt — covers vague prompts like "Do something with: {var}"
+            strictPrompt = `f"${STRICT_PREAMBLE} Exact JSON schema (keys in this order): {{\\"summary\\": \\"<one_sentence_max_20_words>\\", \\"category\\": \\"<lowercase_single_word>\\", \\"confidence\\": <integer_0_to_100>}}. Do not add any other keys. Input: ${inputRef}"`;
           }
 
           // Replace the exec_prompt line with the strict version
           strictPromptLines.push(line.replace(
-            /gl\.nondet\.exec_prompt\(\s*f?["'].*["']\s*\)/,
+            /gl\.nondet\.exec_prompt\(\s*f?["'].*?["']\s*\)/,
             `gl.nondet.exec_prompt(${strictPrompt})`
           ));
           continue;
@@ -823,7 +824,7 @@ export function fixGenLayerContract(code: string): FixResult {
 
     fixed = strictPromptLines.join("\n");
     if (fixed !== promptBefore) {
-      changes.push("🔧 Replaced vague AI prompt(s) with strict byte-identical JSON-only format (consensus-hardened)");
+      changes.push("🔧 Replaced vague AI prompt(s) with strict JSON-only format (consensus-hardened)");
     }
   }
 
