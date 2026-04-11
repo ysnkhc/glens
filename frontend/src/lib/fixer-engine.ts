@@ -150,7 +150,7 @@ export function fixGenLayerContract(code: string): FixResult {
           criteria = "Approve if output is valid JSON with keys 'summary' (string) and 'key_points' (array of strings), no other keys, no markdown, no extra text. Reject otherwise.";
         } else {
           task = "AI processing";
-          criteria = "Approve if output is valid JSON starting with { and ending with }, contains only allowed keys in alphabetical order, no markdown, no extra text. Reject otherwise.";
+          criteria = "Approve ONLY if output is valid JSON with exactly one key 'result' (a short string under 20 words), no other keys, no markdown, no extra text. Reject otherwise.";
         }
 
         if (assignMatch) {
@@ -645,8 +645,8 @@ export function fixGenLayerContract(code: string): FixResult {
   ///////////////////////////////////////////
 
   if (!fixed.includes("Depends")) {
-    fixed = `# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }\n` + fixed;
-    changes.push("✅ Added Bradbury-compatible `Depends` header");
+    fixed = `# { "Depends": "py-genlayer:latest" }\n` + fixed;
+    changes.push("✅ Added `Depends` header (py-genlayer:latest)");
   }
   ///////////////////////////////////////////
   // RULE 11 — Add parameter type annotations
@@ -712,7 +712,13 @@ export function fixGenLayerContract(code: string): FixResult {
       const defMatch = trimmed.match(/^(?:async\s+)?def\s+(\w+)\s*\(([^)]*)\)\s*:\s*$/);
       if (defMatch && !trimmed.includes("->")) {
         const methodName = defMatch[1];
-        // Skip dunder methods
+        // Handle __init__ specifically — always -> None
+        if (methodName === "__init__") {
+          const newLine = line.replace(/\)\s*:\s*$/, `) -> None:`);
+          newRetLines.push(newLine);
+          continue;
+        }
+        // Skip other dunder methods
         if (!methodName.startsWith("__")) {
           // Look back for decorator to determine view/write
           let isView = false;
@@ -806,8 +812,8 @@ export function fixGenLayerContract(code: string): FixResult {
           } else if (/\b(summarize|summary|explain|describe)\b/.test(promptLower)) {
             strictPrompt = `f"${STRICT_PREAMBLE} Exact JSON schema (keys in this order): {{\\"summary\\": \\"<one_sentence_max_20_words>\\"}}. Keep summary deterministic and factual. Do not add any other keys. Input: ${inputRef}"`;
           } else {
-            // General strict prompt — covers vague prompts like "Do something with: {var}"
-            strictPrompt = `f"${STRICT_PREAMBLE} Exact JSON schema (keys in this order): {{\\"summary\\": \\"<one_sentence_max_20_words>\\", \\"category\\": \\"<lowercase_single_word>\\", \\"confidence\\": <integer_0_to_100>}}. Do not add any other keys. Input: ${inputRef}"`;
+            // General strict prompt — single key for maximum consensus
+            strictPrompt = `f"${STRICT_PREAMBLE} Exact JSON schema: {{\\"result\\": \\"<one_sentence_max_20_words>\\"}}. Do not add any other keys. Keep the result factual and deterministic. Input: ${inputRef}"`;
           }
 
           // Replace the exec_prompt line with the strict version
