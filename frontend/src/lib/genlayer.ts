@@ -23,7 +23,7 @@ export type NetworkType = "bradbury" | "studio";
  */
 export const CONTRACT_ADDRESS: Record<NetworkType, string> = {
   bradbury: "0xd0205975d755CF5caCeA0e61A6C098b3c513cDc8",
-  studio:   "0x0e2BaEAF1eE10287687730609f0D2C6aFf2c4dC8",
+  studio:   "0x70b1002f863d5c9aA89e39f032b4D479B4E409bA",
 };
 
 /**
