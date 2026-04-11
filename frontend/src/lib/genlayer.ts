@@ -22,8 +22,8 @@ export type NetworkType = "bradbury" | "studio";
  * Contract addresses per network.
  */
 export const CONTRACT_ADDRESS: Record<NetworkType, string> = {
-  bradbury: "0x392B7e809548E08eDd26Ba85817cC6Ac248edc45",
-  studio:   "0xb7654C201BE3e751CAEeAE5FC51C1f12dF8A3039",
+  bradbury: "0xE1d4D9DF1AbA3e2E64E13d733700d463732A7cDA",
+  studio:   "0xA3DA12a7Bf0f9161c0Bb1E6Ba1FBa4C548178f2C",
 };
 
 /**
