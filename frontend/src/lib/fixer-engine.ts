@@ -760,8 +760,7 @@ export function fixGenLayerContract(code: string): FixResult {
 
   ///////////////////////////////////////////
   // RULE 13 — Make vague AI prompts strict
-  //           (CRITICAL for consensus — validators MUST produce byte-identical output)
-  //           Uses aggressive JSON-only constraints to eliminate LLM variation
+  //           (non-comparative consensus friendly)
   ///////////////////////////////////////////
 
   {
@@ -859,6 +858,128 @@ export function fixGenLayerContract(code: string): FixResult {
     fixed = cleanedLines.join("\n");
     if (fixed !== commentBefore) {
       changes.push("🧹 Removed stale comments that contradicted fixed code");
+    }
+  }
+
+  ///////////////////////////////////////////
+  // RULE 15 — Write methods with web/AI calls
+  //           should store result in state,
+  //           not return it directly.
+  //           GenLayer runtime ignores write
+  //           method return values.
+  ///////////////////////////////////////////
+
+  {
+    const r15Lines = fixed.split("\n");
+    const r15Out: string[] = [];
+    let r15Changed = false;
+    let i = 0;
+
+    while (i < r15Lines.length) {
+      const line = r15Lines[i];
+      const trimmed = line.trim();
+
+      // Detect @gl.public.write decorator
+      if (trimmed === "@gl.public.write") {
+        const decoratorIdx = i;
+        const indent = line.match(/^(\s*)/)?.[1] || "    ";
+        const bodyIndent = indent + "    ";
+
+        // Next non-empty line should be the def
+        let defIdx = -1;
+        for (let j = i + 1; j < Math.min(i + 3, r15Lines.length); j++) {
+          if (r15Lines[j].trim().match(/^(?:async\s+)?def\s+/)) {
+            defIdx = j;
+            break;
+          }
+        }
+
+        if (defIdx >= 0) {
+          const defLine = r15Lines[defIdx].trim();
+          const defMatch = defLine.match(/^(?:async\s+)?def\s+(\w+)\s*\(/);
+          const methodName = defMatch ? defMatch[1] : "";
+
+          // Scan method body for web/AI calls and return statements
+          let hasWebOrAI = false;
+          let returnLineIdx = -1;
+          let returnVarName = "";
+          let methodEndIdx = defIdx;
+          const defIndentLen = (r15Lines[defIdx].match(/^(\s*)/)?.[1] || "").length;
+
+          for (let j = defIdx + 1; j < r15Lines.length; j++) {
+            const bt = r15Lines[j].trim();
+            if (!bt || bt.startsWith("#") || bt.startsWith('"""') || bt.startsWith("'''")) {
+              methodEndIdx = j;
+              continue;
+            }
+            const bIndent = (r15Lines[j].match(/^(\s*)/)?.[1] || "").length;
+            if (bIndent <= defIndentLen && bt.length > 0) break;
+            methodEndIdx = j;
+
+            if (bt.includes("gl.nondet.web.") || bt.includes("gl.nondet.exec_prompt") || bt.includes("gl.eq_principle")) {
+              hasWebOrAI = true;
+            }
+            // Match: return varName (simple identifier, not self.xxx)
+            const retMatch = bt.match(/^return\s+(\w+)\s*$/);
+            if (retMatch && !retMatch[1].startsWith("self")) {
+              returnLineIdx = j;
+              returnVarName = retMatch[1];
+            }
+          }
+
+          // Apply fix: write method + web/AI + returns a local variable
+          if (hasWebOrAI && returnLineIdx >= 0 && returnVarName) {
+            // Infer state variable name from method name or return var
+            let stateVarName = "last_result";
+            if (methodName.startsWith("fetch_")) {
+              stateVarName = methodName.replace("fetch_", "");
+            } else if (methodName.startsWith("get_")) {
+              stateVarName = methodName.replace("get_", "");
+            } else if (methodName.includes("price")) {
+              stateVarName = "price";
+            } else if (methodName.includes("data")) {
+              stateVarName = "fetched_data";
+            } else if (returnVarName !== "result" && returnVarName !== "response" && returnVarName !== "data") {
+              stateVarName = returnVarName;
+            }
+
+            // Replace "return varName" with "self.stateVarName = varName"
+            r15Lines[returnLineIdx] = r15Lines[returnLineIdx].replace(
+              `return ${returnVarName}`,
+              `self.${stateVarName} = ${returnVarName}`
+            );
+
+            // Fix return type annotation: -> str  →  -> None
+            r15Lines[defIdx] = r15Lines[defIdx].replace(/->\s*str\s*:/, "-> None:");
+            r15Lines[defIdx] = r15Lines[defIdx].replace(/->\s*dict\s*:/, "-> None:");
+
+            // Build output up to end of this method
+            for (let j = i; j <= methodEndIdx; j++) {
+              r15Out.push(r15Lines[j]);
+            }
+
+            // Add a @gl.public.view getter after the method
+            const getterName = `get_${stateVarName}`;
+            r15Out.push("");
+            r15Out.push(`${indent}@gl.public.view`);
+            r15Out.push(`${indent}def ${getterName}(self) -> str:`);
+            r15Out.push(`${bodyIndent}return self.${stateVarName}`);
+
+            i = methodEndIdx + 1;
+            r15Changed = true;
+            changes.push(`🔧 \`${methodName}\`: stored result in \`self.${stateVarName}\` instead of returning (write methods can't return data)`);
+            changes.push(`🔧 Added \`${getterName}\` @gl.public.view getter`);
+            continue;
+          }
+        }
+      }
+
+      r15Out.push(line);
+      i++;
+    }
+
+    if (r15Changed) {
+      fixed = r15Out.join("\n");
     }
   }
 
