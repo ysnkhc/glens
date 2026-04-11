@@ -404,8 +404,8 @@ export default function Home() {
       // Strategy: Run client-side analysis FIRST (instant, deterministic, guaranteed correct code),
       // then optionally try on-chain for authoritative validation.
       const codeToReanalyze = data.fixed_code;
-      console.log("AUTO RE-ANALYZE USING FIXED CODE (length:", codeToReanalyze.length, ") first 80 chars:", codeToReanalyze.slice(0, 80));
-      logGL("ACTION → AUTO RE-ANALYZE USING FIXED CODE", { length: codeToReanalyze.length, first80: codeToReanalyze.slice(0, 80) });
+      console.log(`🔧 Re-analyzing fixed code (${codeToReanalyze.length} chars)…`);
+      logGL("ACTION → Re-analyze fixed code", { length: codeToReanalyze.length });
       setIsLoading(true);
       setActivePanel("results");
       setFixToast("Analyzing fixed code…");
@@ -414,6 +414,7 @@ export default function Home() {
         // Step 1: ALWAYS show client-side result immediately (fast, correct code guaranteed)
         const clientResult = await analyzeContract(codeToReanalyze, null, network);
         setResult(clientResult);
+        console.log(`✅ RE-ANALYZE COMPLETE — Risk: ${clientResult.risk_level} | Issues: ${clientResult.issues.length} | Warnings: ${clientResult.warnings.length} | Source: client-side`);
         logGL("ACTION ✅ Fix: re-analyze complete (client-side, fast)", { riskLevel: clientResult.risk_level, issues: clientResult.issues.length });
 
         // Step 2: Try on-chain re-analyze for authoritative validation (optional upgrade)

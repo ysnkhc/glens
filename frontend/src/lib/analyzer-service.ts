@@ -493,7 +493,7 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
         throw new Error(`No valid GenLayer txId: "${genLayerTxId}"`);
       }
 
-      console.log("TX HASH:", genLayerTxId);
+      logGL("TX submitted", { txId: genLayerTxId });
       logGL("ANALYZE → TX SENT", { genLayerTxId });
 
       const analyzePollResult = await pollConsensusStatus(
@@ -566,7 +566,7 @@ export async function analyzeContract(code: string, walletAddress?: string | nul
       }
       const failure = detectConsensusFailure(err);
       logGL("ANALYZE → TX ERROR", { error: err instanceof Error ? err.message : err, failure });
-      console.warn("On-chain analysis failed, using client-side fallback:", err);
+      // On-chain failed — fall through to client-side (logged above via logGL)
       // Fall through to client fallback below
     }
   }
@@ -642,7 +642,7 @@ export async function explainContract(code: string, walletAddress?: string | nul
     );
 
     // 🔴 AUDIT LOG: After txHash
-    console.log("TX HASH:", txHash);
+    logGL("TX submitted", { txId: String(txHash) });
     logGL("EXPLAIN → TX SENT", { txHash });
 
     // Fix #7: Use pollConsensusStatus — SDK's waitForTransactionReceipt misses FINALIZED
@@ -680,7 +680,7 @@ export async function explainContract(code: string, walletAddress?: string | nul
     }
     const failure = detectConsensusFailure(err);
     logGL("EXPLAIN → TX ERROR", { error: err instanceof Error ? err.message : err, failure });
-    console.warn("On-chain explain failed:", err);
+    // On-chain explain failed — fall through to client-side (logged above via logGL)
     logGL("EXPLAIN → FALLBACK to client-side", { method: "generateExplanation" });
     return { text: generateExplanation(code), execution: computeTrust("CLIENT_FALLBACK") };
   }
@@ -1513,7 +1513,7 @@ export async function fixContract(code: string, walletAddress?: string | null, n
       );
 
       // 🔴 AUDIT LOG: After txHash
-      console.log("TX HASH:", txHash);
+      logGL("TX submitted", { txId: String(txHash) });
       logGL("FIX → TX SENT", { txHash });
 
       // Fix #7: Use pollConsensusStatus — SDK's waitForTransactionReceipt misses FINALIZED
@@ -1590,7 +1590,7 @@ export async function fixContract(code: string, walletAddress?: string | null, n
       }
       const failure = detectConsensusFailure(err);
       logGL("FIX → TX ERROR", { error: err instanceof Error ? err.message : err, failure });
-      console.warn("On-chain fix failed:", err);
+      // On-chain fix failed — fall through to rules-only (logged above via logGL)
       logGL("FIX → FALLBACK to rules-only", { method: "ruleBasedFix" });
     }
   } else {

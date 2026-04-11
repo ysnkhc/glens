@@ -202,7 +202,7 @@ export async function pollConsensusStatus(
   let lastStatus = "";
   let pollCount = 0;
 
-  console.log(`🔄 POLL START — txId: ${txId}, network: ${network}, interval: ${pollInterval}ms, timeout: ${maxTimeout / 1000}s`);
+  console.log(`🔄 Consensus polling started (${network}, timeout: ${maxTimeout / 60000}min)`);
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -211,7 +211,7 @@ export async function pollConsensusStatus(
 
     // ─── Timeout guard: don't poll forever ───
     if (elapsed > maxTimeout) {
-      console.log(`⏱️ POLL TIMEOUT after ${(elapsed / 1000).toFixed(0)}s — lastStatus: "${lastStatus}"`);
+      console.log(`⏱️ Consensus timeout after ${(elapsed / 60000).toFixed(1)}min`);
       if (onProgress) onProgress("TIMEOUT", elapsed);
       return {
         consensus: "TIMEOUT",
@@ -226,20 +226,20 @@ export async function pollConsensusStatus(
     try {
       const tx = await client.getTransaction({ hash: txId });
       if (!tx) {
-        console.log(`🔄 POLL #${pollCount} (${(elapsed / 1000).toFixed(0)}s) — tx NOT FOUND (null), waiting...`);
         if (onProgress) onProgress("WAITING", elapsed);
         await new Promise(r => setTimeout(r, pollInterval));
         continue;
       }
       const statusName = tx.statusName || "";
       const resultName = tx.resultName || "";
-      console.log(`🔄 POLL #${pollCount} (${(elapsed / 1000).toFixed(0)}s) — statusName: "${statusName}", resultName: "${resultName}"`);
-      if (!lastStatus) {
-        console.log("📍 TX AUDIT — statusName:", statusName, "resultName:", resultName, "keys:", Object.keys(tx));
+      // Only log on state transitions to reduce noise
+      if (statusName !== lastStatus) {
+        console.log(`🔄 ${lastStatus || "PENDING"} → ${statusName} (${(elapsed / 1000).toFixed(0)}s)`);
+        lastStatus = statusName;
+        if (onProgress) onProgress(statusName, elapsed);
       }
-      if (statusName !== lastStatus) { lastStatus = statusName; if (onProgress) onProgress(statusName, elapsed); }
       if (TERMINAL_AGREED.includes(statusName)) {
-        console.log(`✅ POLL TERMINAL AGREED — statusName: "${statusName}", resultName: "${resultName}"`);
+        console.log(`✅ Consensus reached: ${statusName} (${(elapsed / 1000).toFixed(0)}s)`);
         // ACCEPTED  = validators agreed after appeal rounds (resultName is often empty)
         // FINALIZED = validators agreed in first round (resultName = "AGREE")
         // EXECUTED  = Bradbury terminal success status
@@ -252,12 +252,12 @@ export async function pollConsensusStatus(
         };
       }
       if (TERMINAL_FAILED.includes(statusName)) {
-        console.log(`❌ POLL TERMINAL FAILED — statusName: "${statusName}", resultName: "${resultName}"`);
+        console.log(`❌ Consensus failed: ${statusName} (${(elapsed / 1000).toFixed(0)}s)`);
         return { consensus: "DISAGREED", txId, status: statusName, statusName, resultName, data: tx };
       }
     } catch (err) {
       if (signal?.aborted) return { consensus: "CANCELLED", txId, status: "CANCELLED" };
-      console.warn(`🔄 POLL #${pollCount} ERROR (${(elapsed / 1000).toFixed(0)}s):`, err);
+      // Transient poll error — retry silently
     }
     await new Promise(r => setTimeout(r, pollInterval));
   }
@@ -273,22 +273,9 @@ function createHybridProvider(rpcUrl: string): EIP1193Provider {
         const ethereum = getEthereum();
         if (!ethereum) throw new Error("Wallet not available for signing");
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const txData = (params as any)?.[0]?.data as string | undefined;
-        if (txData && txData.length > 10) {
-          try {
-            const abiData = txData.slice(10);
-            const wordCount = Math.floor(abiData.length / 64);
-            console.group("📍 CALLDATA AUDIT");
-            for (let i = Math.max(0, wordCount - 4); i < wordCount; i++) {
-              const word = abiData.slice(i * 64, (i + 1) * 64);
-              const asNum = BigInt("0x" + word);
-              const label = i === wordCount - 1 ? "➡️ LAST WORD" : `word[${i}]`;
-              console.log(label, word, "=", asNum.toString(),
-                asNum > 1000000000n && asNum < 9999999999n ? ("→ " + new Date(Number(asNum) * 1000).toISOString()) : "");
-            }
-            console.groupEnd();
-          } catch(e) { console.warn("Calldata audit failed:", e); }
-        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const _txData = (params as any)?.[0]?.data as string | undefined;
+        void _txData; // calldata available for debug if needed
         const txHash = await ethereum.request({ method, params });
         lastEvmTxHash = txHash as string;
         return txHash;
