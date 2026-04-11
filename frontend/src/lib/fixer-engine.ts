@@ -680,7 +680,7 @@ export function fixGenLayerContract(code: string): FixResult {
       let bodyIndent = "        ";
 
       for (let idx = 0; idx < initLines.length; idx++) {
-        if (/^\s*def __init__\(self\)\s*:/.test(initLines[idx])) {
+        if (/^\s*def __init__\(self\)\s*(?:->[^:]*)?:/.test(initLines[idx])) {
           initDefIdx = idx;
           defIndentLen = (initLines[idx].match(/^(\s*)/)?.[1] || "").length;
           bodyIndent = " ".repeat(defIndentLen + 4);
@@ -1089,19 +1089,29 @@ export function fixGenLayerContract(code: string): FixResult {
               stateVarName = returnVarName;
             }
 
-            // External web/AI data is always stored as str — safest for consensus
-            // .json() returns dict which can't be stored in typed state vars
-            const inferredType = "str";
+            // Smart type inference for state variable — match name semantics
+            const NUMERIC_HINTS = ["price", "amount", "balance", "count", "total", "num", "fee", "cost", "rate", "score", "id", "index"];
+            const isNumeric = NUMERIC_HINTS.some(h => stateVarName.includes(h));
+            const inferredType = isNumeric ? "u256" : "str";
 
             // Replace "return varName" with "self.stateVarName = varName"
-            r15Lines[returnLineIdx] = r15Lines[returnLineIdx].replace(
-              `return ${returnVarName}`,
-              `self.${stateVarName} = ${returnVarName}`
-            );
+            // Use type-safe assignment based on inferred type
+            if (isNumeric) {
+              // For numeric state vars: parse the value safely
+              // data might be a parsed dict or a raw string
+              r15Lines[returnLineIdx] = r15Lines[returnLineIdx].replace(
+                `return ${returnVarName}`,
+                `self.${stateVarName} = u256(int(float(str(${returnVarName}))))`
+              );
+            } else {
+              r15Lines[returnLineIdx] = r15Lines[returnLineIdx].replace(
+                `return ${returnVarName}`,
+                `self.${stateVarName} = str(${returnVarName})`
+              );
+            }
 
-            // Fix return type annotation: -> str/dict  →  -> None
-            r15Lines[defIdx] = r15Lines[defIdx].replace(/\->\s*str\s*:/, "-> None:");
-            r15Lines[defIdx] = r15Lines[defIdx].replace(/\->\s*dict\s*:/, "-> None:");
+            // Fix return type annotation: -> str/dict/u256  →  -> None
+            r15Lines[defIdx] = r15Lines[defIdx].replace(/->\s*(str|dict|u256)\s*:/, "-> None:");
 
             // Convert .json() to .text inside lambda web calls
             // .text returns str (safe for state), .json() returns dict (type mismatch)
@@ -1118,10 +1128,11 @@ export function fixGenLayerContract(code: string): FixResult {
             }
 
             // Add a @gl.public.view getter after the method
+            // Return type MUST match the state variable type
             const getterName = `get_${stateVarName}`;
             r15Out.push("");
             r15Out.push(`${indent}@gl.public.view`);
-            r15Out.push(`${indent}def ${getterName}(self) -> str:`);
+            r15Out.push(`${indent}def ${getterName}(self) -> ${inferredType}:`);
             r15Out.push(`${bodyIndent}return self.${stateVarName}`);
 
             // Track for class-level declaration
@@ -1250,16 +1261,29 @@ export function fixGenLayerContract(code: string): FixResult {
           }
         }
 
-        // Wrap the dict-access result in str() for type safety with state vars
-        // self.price = data["price"] → self.price = str(data["price"])
-        if (!trimmed.includes("str(")) {
+        // Wrap the dict-access result with type-safe conversion
+        // Detect the state variable type from declaration to use correct wrapper
+        if (!trimmed.includes("str(") && !trimmed.includes("u256(")) {
           const eqIdx = trimmed.indexOf("=");
           if (eqIdx > 0) {
             const rhs = trimmed.slice(eqIdx + 1).trim();
             const origIndent = r16Lines[i].match(/^(\s*)/)?.[1] || "        ";
-            r16Lines[i] = `${origIndent}${lhs} = str(${rhs})`;
+            const stateVarField = lhs.replace("self.", "");
+            // Check if state var is declared as u256/numeric
+            const NUMERIC_HINTS = ["price", "amount", "balance", "count", "total", "num", "fee", "cost", "rate", "score", "id", "index"];
+            const isNumericVar = NUMERIC_HINTS.some(h => stateVarField.includes(h))
+              || fixed.includes(`${stateVarField}: u256`)
+              || fixed.includes(`${stateVarField}: i256`);
+
+            if (isNumericVar) {
+              // Safe numeric parsing: handles "65432.10" → u256
+              r16Lines[i] = `${origIndent}${lhs} = u256(int(float(str(${rhs}))))`;
+              changes.push(`🔧 Wrapped dict access in \`u256(int(float()))\` for numeric state variable`);
+            } else {
+              r16Lines[i] = `${origIndent}${lhs} = str(${rhs})`;
+              changes.push(`🔧 Wrapped dict access in \`str()\` for state variable type safety`);
+            }
             r16Changed = true;
-            changes.push(`🔧 Wrapped dict access in \`str()\` for state variable type safety`);
           }
         }
       }
