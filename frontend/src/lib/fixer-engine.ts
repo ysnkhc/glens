@@ -127,7 +127,7 @@ export function fixGenLayerContract(code: string): FixResult {
         // Extract the full exec_prompt(...) call content
         const fullCall = callLines.join("\n");
 
-        // ─── Strict task/criteria generation — forces byte-identical output ───
+        // ─── Strict task/criteria generation for non-comparative consensus ───
         const promptLower = fullCall.toLowerCase();
         let task: string;
         let criteria: string;

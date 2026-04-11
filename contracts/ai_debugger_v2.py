@@ -15,6 +15,10 @@ class AIContractDebugger(gl.Contract):
     total_calls: u256
 
     def __init__(self):
+        self.last_analysis = ""
+        self.last_explanation = ""
+        self.last_simulation = ""
+        self.last_fix = ""
         self.total_calls = u256(0)
 
     @gl.public.write
