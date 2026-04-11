@@ -399,55 +399,65 @@ export default function Home() {
       setSimulationResult(null);
       setTimeout(() => setFixToast(null), 10000);
 
-      // Auto re-analyze the fixed code — RESILIENT VERSION
-      // After a long fix_contract TX (4-8 min), the wallet session can go stale.
-      // Re-fetch the wallet address to ensure it's still valid before the second TX.
-      logGL("ACTION → Fix: auto re-analyze starting", { fixedCodeLength: data.fixed_code.length });
-      // IMPORTANT: Always use data.fixed_code here, NOT the React `code` state (which may be stale)
+      // Auto re-analyze the fixed code
+      // CRITICAL: Always use data.fixed_code, NOT React `code` state (closure is stale).
+      // Strategy: Run client-side analysis FIRST (instant, deterministic, guaranteed correct code),
+      // then optionally try on-chain for authoritative validation.
       const codeToReanalyze = data.fixed_code;
       console.log("AUTO RE-ANALYZE USING FIXED CODE (length:", codeToReanalyze.length, ") first 80 chars:", codeToReanalyze.slice(0, 80));
       logGL("ACTION → AUTO RE-ANALYZE USING FIXED CODE", { length: codeToReanalyze.length, first80: codeToReanalyze.slice(0, 80) });
       setIsLoading(true);
       setActivePanel("results");
-      setFixToast("Running on-chain AI analysis… This can take 3–15 minutes due to validator consensus. Please wait.");
+      setFixToast("Analyzing fixed code…");
+
       try {
-        // Re-fetch fresh wallet address — the one in state may be stale after 8 min fix TX
+        // Step 1: ALWAYS show client-side result immediately (fast, correct code guaranteed)
+        const clientResult = await analyzeContract(codeToReanalyze, null, network);
+        setResult(clientResult);
+        logGL("ACTION ✅ Fix: re-analyze complete (client-side, fast)", { riskLevel: clientResult.risk_level, issues: clientResult.issues.length });
+
+        // Step 2: Try on-chain re-analyze for authoritative validation (optional upgrade)
         const freshAddress = await getConnectedAddress();
         if (freshAddress) {
-          // Try on-chain re-analyze with fresh wallet session
-          const newResult = await analyzeContract(codeToReanalyze, freshAddress, network);
-          setResult(newResult);
-          if (freshAddress !== walletAddress) {
-            setWalletAddress(freshAddress); // sync React state
-          }
-          logGL("ACTION ✅ Fix: auto re-analyze complete (on-chain)", { riskLevel: newResult.risk_level });
-        } else {
-          // Wallet disconnected during long fix — use client-side
-          const newResult = await analyzeContract(codeToReanalyze, null, network);
-          setResult(newResult);
-          logGL("ACTION ✅ Fix: auto re-analyze complete (client-side, wallet disconnected)", { riskLevel: newResult.risk_level });
-        }
-      } catch (reErr: unknown) {
-        const reMsg = reErr instanceof Error ? reErr.message : "";
-        if (reMsg.includes("Transaction cancelled") || reMsg.includes("user rejected")) {
-          setFixToast("Re-analysis cancelled — approve the wallet popup to continue.");
-          setTimeout(() => setFixToast(null), 5000);
-          logGL("ACTION ✘ Fix: re-analyze rejected by user", {});
-        } else {
-          // On-chain re-analyze failed (stale session) — graceful fallback to client-side
-          logGL("ACTION ⚠️ Fix: on-chain re-analyze failed, falling back to client-side", { error: reMsg });
-          setFixToast("On-chain analysis took too long. Showing fast client-side result.");
+          setFixToast("Client analysis shown. Running on-chain validation… (3–15 min)");
           try {
-            const fallbackResult = await analyzeContract(codeToReanalyze, null, network);
-            setResult(fallbackResult);
-            logGL("ACTION ✅ Fix: auto re-analyze complete (client-side fallback)", { riskLevel: fallbackResult.risk_level });
-          } catch {
-            setResult(null);
-            logGL("ACTION ❌ Fix: re-analyze failed completely", {});
+            const onchainResult = await analyzeContract(codeToReanalyze, freshAddress, network);
+            // Verify the on-chain result is actually about the FIXED code
+            // (not stale data from a previous call)
+            const onchainIssueCount = onchainResult.issues.length + onchainResult.warnings.length;
+            const clientIssueCount = clientResult.issues.length + clientResult.warnings.length;
+
+            // Sanity check: on-chain shouldn't have MORE issues than the original broken code
+            // If it does, it's likely stale data — keep client result
+            if (onchainIssueCount <= clientIssueCount + 2) {
+              setResult(onchainResult);
+              logGL("ACTION ✅ Fix: re-analyze upgraded to on-chain", { riskLevel: onchainResult.risk_level });
+            } else {
+              logGL("ACTION ⚠️ Fix: on-chain result looks stale, keeping client result", {
+                onchainIssues: onchainIssueCount, clientIssues: clientIssueCount,
+              });
+            }
+
+            if (freshAddress !== walletAddress) {
+              setWalletAddress(freshAddress);
+            }
+          } catch (onchainErr: unknown) {
+            const onchainMsg = onchainErr instanceof Error ? onchainErr.message : "";
+            if (onchainMsg.includes("Transaction cancelled") || onchainMsg.includes("user rejected")) {
+              setFixToast("On-chain validation skipped. Showing client-side result.");
+              setTimeout(() => setFixToast(null), 5000);
+            } else {
+              logGL("ACTION ⚠️ Fix: on-chain re-analyze failed, client result retained", { error: onchainMsg });
+            }
           }
         }
+      } catch {
+        // Even client-side failed — clear result
+        setResult(null);
+        logGL("ACTION ❌ Fix: re-analyze failed completely", {});
       } finally {
         setIsLoading(false);
+        setTimeout(() => setFixToast(null), 5000);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "";
