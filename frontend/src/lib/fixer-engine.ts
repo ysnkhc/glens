@@ -972,36 +972,137 @@ export function fixGenLayerContract(code: string): FixResult {
   }
 
   ///////////////////////////////////////////
-  // RULE 14 — Clean up stale/misleading comments
-  //           that contradict the fixed code
+  // RULE 14 — Production polish: clean up comments
+  //           Remove fixer-generated and bug-explanation comments.
+  //           Preserve user's original meaningful comments.
+  //           Add GLENS header stamp.
   ///////////////////////////////////////////
 
   {
     const commentBefore = fixed;
     const commentLines = fixed.split("\n");
     const cleanedLines: string[] = [];
+
+    // Poison phrases that indicate a comment was added by the fixer
+    // or describes a bug in the original code (now fixed)
+    const POISON_PHRASES = [
+      // Fixer-generated explanations
+      "common mistake",
+      "bad ai call",
+      "removed:",
+      "# removed",
+      "bug:",
+      "fixme:",
+      "hack:",
+      // Bug description patterns
+      "without eq_principle",
+      "without consensus",
+      "without nondet",
+      "without wrapping",
+      "without gl.nondet",
+      "calling ai without",
+      "external call without",
+      "not wrapped",
+      "missing eq_principle",
+      "missing consensus",
+      "missing nondet",
+      "missing wrapper",
+      "should use gl.nondet",
+      "should use eq_principle",
+      "should be wrapped",
+      "must be wrapped",
+      "needs eq_principle",
+      "needs consensus",
+      "needs wrapping",
+      // Forbidden pattern warnings
+      "forbidden",
+      "not allowed in genlayer",
+      "banned in genlayer",
+      "unsafe:",
+      "dangerous:",
+      "non-deterministic call",
+      "breaks consensus",
+      "will fail on-chain",
+      "will cause consensus failure",
+      // Fixer artifact markers
+      "auto-fixed",
+      "auto fixed",
+      "fixer:",
+      "patched by",
+      "was using",
+      "originally used",
+      "replaced with",
+      "changed from",
+      "converted from",
+    ];
+
     for (const line of commentLines) {
       const trimmed = line.trim();
-      // Remove comments that describe bugs that have been fixed
+
+      // Only check comment lines (# ...) — never touch code or docstrings
       if (trimmed.startsWith("#") && !trimmed.startsWith("# {")) {
         const lower = trimmed.toLowerCase();
-        const isStale =
-          (lower.includes("without eq_principle") && fixed.includes("eq_principle")) ||
-          (lower.includes("without consensus") && fixed.includes("eq_principle")) ||
-          (lower.includes("without nondet") && fixed.includes("gl.nondet")) ||
-          lower.includes("# removed:") ||
-          (lower.includes("calling ai without") && fixed.includes("eq_principle")) ||
-          (lower.includes("external call without") && fixed.includes("gl.nondet.web"));
-        if (isStale) {
-          // Skip this stale comment line entirely
-          continue;
+
+        // Check against poison list
+        const isPoisoned = POISON_PHRASES.some(phrase => lower.includes(phrase));
+
+        if (isPoisoned) {
+          // Don't remove if it looks like a legitimate user comment
+          // that happens to contain a poison word in a different context
+          // Heuristic: lines with "TODO", "NOTE", "IMPORTANT", or 3+ capitalized
+          // words at the start are likely user comments
+          const isLikelyUserComment =
+            lower.includes("todo") ||
+            lower.includes("note:") ||
+            lower.includes("important") ||
+            lower.includes("warning:") ||
+            /^#\s+[A-Z][a-z]+\s+[A-Z][a-z]+\s+[A-Z]/.test(trimmed);
+
+          if (!isLikelyUserComment) {
+            continue; // Skip this poisoned comment
+          }
         }
       }
+
       cleanedLines.push(line);
     }
-    fixed = cleanedLines.join("\n");
+
+    // Remove consecutive blank lines left by comment removal (max 1 blank)
+    const dedupedLines: string[] = [];
+    let prevBlank = false;
+    for (const line of cleanedLines) {
+      const isBlank = line.trim() === "";
+      if (isBlank && prevBlank) continue; // skip consecutive blanks
+      dedupedLines.push(line);
+      prevBlank = isBlank;
+    }
+
+    fixed = dedupedLines.join("\n");
     if (fixed !== commentBefore) {
-      changes.push("🧹 Removed stale comments that contradicted fixed code");
+      changes.push("🧹 Cleaned up stale comments for production-ready output");
+    }
+  }
+
+  ///////////////////////////////////////////
+  // RULE 14b — Add GLENS header stamp
+  //            (after Depends line, before imports)
+  ///////////////////////////////////////////
+
+  {
+    const GLENS_HEADER = "# Fixed and hardened by GLENS — GenLayer Intelligent Contract Debugger";
+    if (!fixed.includes(GLENS_HEADER)) {
+      // Insert after the Depends header line
+      const dependsMatch = fixed.match(/^(#\s*\{.*"Depends".*\}\s*\n)/m);
+      if (dependsMatch) {
+        fixed = fixed.replace(dependsMatch[0], dependsMatch[0] + GLENS_HEADER + "\n");
+      } else if (fixed.startsWith("from genlayer")) {
+        // No Depends header — insert before the import
+        fixed = GLENS_HEADER + "\n" + fixed;
+      } else {
+        // Insert at the very top
+        fixed = GLENS_HEADER + "\n\n" + fixed;
+      }
+      changes.push("✅ Added GLENS header stamp");
     }
   }
 
