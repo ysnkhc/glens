@@ -395,27 +395,60 @@ export function fixGenLayerContract(code: string): FixResult {
       fixed = newLines.join("\n");
     }
 
-    // ─── Post-wrap cleanup: remove .json()/.text on wrapped variables ───
-    // After wrapping, the variable holds a string (consensus result), not a response object.
-    // So `data = response.json()` must become `data = response` (it's already text).
+    // ─── Post-wrap cleanup: fix .json()/.text on wrapped variables ───
+    // After wrapping with .text, the variable holds a plain string.
+    // .text calls → just strip (already a string)
+    // .json() calls → replace with json.loads() so dict key access still works
+    // Chained: response.json()["key"] → json.loads(response)["key"]
     if (wrappedVars.size > 0) {
       const cleanupLines = fixed.split("\n");
       let cleanupChanged = false;
+      let needsJsonImport = false;
+
       for (let idx = 0; idx < cleanupLines.length; idx++) {
         const t = cleanupLines[idx].trim();
         for (const v of wrappedVars) {
-          // Match: data = varname.json() or data = varname.text
-          if (t.includes(`${v}.json()`) || t.includes(`${v}.text`)) {
+          // Case 1: varname.json() → json.loads(varname)
+          // Handles both `data = response.json()` and `data = response.json()["key"]`
+          if (t.includes(`${v}.json()`)) {
             cleanupLines[idx] = cleanupLines[idx]
-              .replace(new RegExp(`\\b${v}\\.json\\(\\)`, "g"), v)
+              .replace(new RegExp(`\\b${v}\\.json\\(\\)`, "g"), `json.loads(${v})`);
+            cleanupChanged = true;
+            needsJsonImport = true;
+          }
+          // Case 2: varname.text → just varname (already a string)
+          if (t.includes(`${v}.text`)) {
+            cleanupLines[idx] = cleanupLines[idx]
               .replace(new RegExp(`\\b${v}\\.text`, "g"), v);
             cleanupChanged = true;
           }
         }
       }
+
       if (cleanupChanged) {
         fixed = cleanupLines.join("\n");
-        changes.push("🔧 Cleaned up `.json()`/`.text` on wrapped variable (already a string from consensus)");
+        changes.push("🔧 Replaced `.json()` with `json.loads()` on wrapped variable (response is text from consensus)");
+      }
+
+      // Add `import json` if needed and not already present
+      if (needsJsonImport && !fixed.includes("import json")) {
+        // Insert after the genlayer import line
+        const genlayerImportIdx = fixed.indexOf("from genlayer import *");
+        if (genlayerImportIdx >= 0) {
+          const insertPos = fixed.indexOf("\n", genlayerImportIdx);
+          if (insertPos >= 0) {
+            fixed = fixed.slice(0, insertPos) + "\nimport json" + fixed.slice(insertPos);
+          }
+        } else {
+          // Fallback: add at top after Depends header
+          const dependsMatch = fixed.match(/^#\s*\{.*"Depends".*\}\s*\n/m);
+          if (dependsMatch) {
+            fixed = fixed.replace(dependsMatch[0], dependsMatch[0] + "import json\n");
+          } else {
+            fixed = "import json\n" + fixed;
+          }
+        }
+        changes.push("✅ Added `import json` for safe JSON parsing of web responses");
       }
     }
   }
@@ -1144,6 +1177,110 @@ export function fixGenLayerContract(code: string): FixResult {
           changes.push(`✅ Added state variable declaration \`${sv.name}: ${sv.type}\``);
         }
       }
+    }
+  }
+
+  ///////////////////////////////////////////
+  // RULE 16 — Fix dict-key access on consensus string variables
+  //           After Rule 5b wraps web calls with .text,
+  //           the response is a plain string. If the original
+  //           code did data["key"], we need json.loads() + str().
+  //           Also catches patterns missed by Rule 5b cleanup.
+  ///////////////////////////////////////////
+
+  {
+    const r16Lines = fixed.split("\n");
+    let r16Changed = false;
+    let r16NeedsJsonImport = false;
+
+    for (let i = 0; i < r16Lines.length; i++) {
+      const trimmed = r16Lines[i].trim();
+
+      // Pattern: self.xxx = varname["key"] where varname is a plain string from consensus
+      // Need to check if varname was assigned from eq_principle (string result)
+      const dictAccessMatch = trimmed.match(/^(self\.\w+)\s*=\s*(\w+)\s*\[/);
+      if (!dictAccessMatch) continue;
+
+      const lhs = dictAccessMatch[1]; // self.price
+      const dictVar = dictAccessMatch[2]; // data
+
+      // Look backward: was dictVar assigned from eq_principle or from a json.loads-less response?
+      let needsFix = false;
+      for (let k = i - 1; k >= Math.max(0, i - 15); k--) {
+        const prevTrimmed = r16Lines[k].trim();
+        // If dictVar = response (where response is from eq_principle)
+        // This means dictVar is a string, and ["key"] will fail
+        if (prevTrimmed.startsWith(`${dictVar} = `) && !prevTrimmed.includes("json.loads")) {
+          // Check if the assigned value is a simple variable (consensus result)
+          const assignRhs = prevTrimmed.replace(`${dictVar} = `, "").trim();
+          // If RHS is a simple variable name (not a function call or dict/list literal)
+          if (/^\w+$/.test(assignRhs)) {
+            // Check if THAT variable was from eq_principle
+            for (let m = k - 1; m >= Math.max(0, k - 15); m--) {
+              const mTrimmed = r16Lines[m].trim();
+              if (mTrimmed.includes("eq_principle") && mTrimmed.includes(assignRhs)) {
+                needsFix = true;
+                break;
+              }
+            }
+          }
+          break;
+        }
+        // If dictVar was already set via json.loads, no fix needed
+        if (prevTrimmed.includes(`${dictVar} = json.loads(`)) {
+          break;
+        }
+      }
+
+      if (needsFix) {
+        const indent = r16Lines[i].match(/^(\s*)/)?.[1] || "        ";
+        // Find the assignment line: `data = response` → `data = json.loads(response)`
+        for (let k = i - 1; k >= Math.max(0, i - 10); k--) {
+          const prevTrimmed = r16Lines[k].trim();
+          if (prevTrimmed.startsWith(`${dictVar} = `) && !prevTrimmed.includes("json.loads")) {
+            const simpleVar = prevTrimmed.replace(`${dictVar} = `, "").trim();
+            if (/^\w+$/.test(simpleVar)) {
+              const prevIndent = r16Lines[k].match(/^(\s*)/)?.[1] || "        ";
+              r16Lines[k] = `${prevIndent}${dictVar} = json.loads(${simpleVar})`;
+              r16NeedsJsonImport = true;
+              r16Changed = true;
+              changes.push(`🔧 Added \`json.loads()\` to parse consensus response before dict access`);
+            }
+            break;
+          }
+        }
+
+        // Wrap the dict-access result in str() for type safety with state vars
+        // self.price = data["price"] → self.price = str(data["price"])
+        if (!trimmed.includes("str(")) {
+          const eqIdx = trimmed.indexOf("=");
+          if (eqIdx > 0) {
+            const rhs = trimmed.slice(eqIdx + 1).trim();
+            const origIndent = r16Lines[i].match(/^(\s*)/)?.[1] || "        ";
+            r16Lines[i] = `${origIndent}${lhs} = str(${rhs})`;
+            r16Changed = true;
+            changes.push(`🔧 Wrapped dict access in \`str()\` for state variable type safety`);
+          }
+        }
+      }
+    }
+
+    if (r16Changed) {
+      fixed = r16Lines.join("\n");
+    }
+
+    // Add import json if Rule 16 needed it
+    if (r16NeedsJsonImport && !fixed.includes("import json")) {
+      const genlayerImportIdx = fixed.indexOf("from genlayer import *");
+      if (genlayerImportIdx >= 0) {
+        const insertPos = fixed.indexOf("\n", genlayerImportIdx);
+        if (insertPos >= 0) {
+          fixed = fixed.slice(0, insertPos) + "\nimport json" + fixed.slice(insertPos);
+        }
+      } else {
+        fixed = "import json\n" + fixed;
+      }
+      changes.push("✅ Added `import json` for safe JSON parsing");
     }
   }
 
