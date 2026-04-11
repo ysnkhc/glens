@@ -218,42 +218,98 @@ export function fixGenLayerContract(code: string): FixResult {
   }
 
   ///////////////////////////////////////////
-  // RULE 5b — Wrap naked gl.nondet.web calls in gl.eq_principle
+  // RULE 5b — Wrap ALL unwrapped gl.nondet.web calls in gl.eq_principle
+  //           HARDENED: handles var, self.var, return, standalone
+  //           Forces .text inside lambda for consensus safety
+  //           Context-aware: checks multi-line eq_principle blocks
   ///////////////////////////////////////////
 
   if (fixed.includes("gl.nondet.web.")) {
-    // Check if any gl.nondet.web calls are NOT already inside gl.eq_principle
-    // Look for lines with "= gl.nondet.web." or "return gl.nondet.web." that are NOT preceded by eq_principle
-    const hasUnwrappedWeb = fixed.split("\n").some(line => {
-      const t = line.trim();
-      return (t.match(/^\w+\s*=\s*gl\.nondet\.web\./) || t.match(/^return\s+gl\.nondet\.web\./))
-        && !t.includes("eq_principle");
-    });
-    if (hasUnwrappedWeb) {
     const lines = fixed.split("\n");
     const newLines: string[] = [];
+    let changed5b = false;
     let i = 0;
+    // Track which variables were wrapped so we can clean up follow-up .json()/.text
+    const wrappedVars = new Set<string>();
 
     while (i < lines.length) {
       const line = lines[i];
       const trimmed = line.trim();
 
-      // Match: varname = gl.nondet.web.get/post/...( 
-      const webAssignMatch = trimmed.match(/^(\w+)\s*=\s*gl\.nondet\.web\.\w+\(/);
-      // Match: return gl.nondet.web.get/post/...( 
-      const webReturnMatch = trimmed.match(/^return\s+gl\.nondet\.web\.\w+\(/);
+      // Skip comments
+      if (trimmed.startsWith("#")) {
+        newLines.push(line);
+        i++;
+        continue;
+      }
 
-      if (webAssignMatch || webReturnMatch) {
+      // Check if this line contains a gl.nondet.web call
+      if (trimmed.includes("gl.nondet.web.")) {
+
+        // Skip if this line is already inside a lambda (lambda: gl.nondet.web... is correct)
+        const webIdx = trimmed.indexOf("gl.nondet.web.");
+        const lambdaIdx = trimmed.indexOf("lambda:");
+        if (lambdaIdx >= 0 && lambdaIdx < webIdx) {
+          newLines.push(line);
+          i++;
+          continue;
+        }
+
+        // Skip if this line itself contains eq_principle (already wrapped inline)
+        if (trimmed.includes("eq_principle")) {
+          newLines.push(line);
+          i++;
+          continue;
+        }
+
+        // Check backward: are we inside a multi-line gl.eq_principle block?
+        let insideEqPrinciple = false;
+        // Track paren depth going backward to see if an eq_principle( opened but hasn't closed
+        let backParenDepth = 0;
+        for (let k = i - 1; k >= Math.max(0, i - 20); k--) {
+          const prevTrimmed = lines[k].trim();
+          if (prevTrimmed.startsWith("#")) continue;
+          // Count parens on this line (in reverse — closing adds, opening subtracts)
+          for (const ch of lines[k]) {
+            if (ch === ")") backParenDepth++;
+            if (ch === "(") backParenDepth--;
+          }
+          // If we find eq_principle and we're still inside its parens, we're wrapped
+          if (prevTrimmed.includes("eq_principle") && backParenDepth < 0) {
+            insideEqPrinciple = true;
+            break;
+          }
+          // If parens balanced/closed, we've left any wrapping block
+          if (backParenDepth >= 0 && (prevTrimmed.startsWith("def ") || prevTrimmed.startsWith("@gl.") || prevTrimmed.startsWith("class "))) {
+            break;
+          }
+        }
+
+        if (insideEqPrinciple) {
+          newLines.push(line);
+          i++;
+          continue;
+        }
+
+        // ─── This is an UNWRAPPED web call — wrap it ───
         const indent = line.match(/^(\s*)/)?.[1] || "    ";
 
-        // Collect all lines of this call (find matching closing paren)
+        // Detect LHS pattern:
+        //   self.xxx = gl.nondet.web.get(...)   → self-assignment
+        //   varname = gl.nondet.web.get(...)    → local assignment
+        //   return gl.nondet.web.get(...)       → return
+        //   gl.nondet.web.get(...)              → standalone
+        const selfAssignMatch = trimmed.match(/^(self\.\w+)\s*=\s*gl\.nondet\.web\./);
+        const varAssignMatch = !selfAssignMatch ? trimmed.match(/^(\w+)\s*=\s*gl\.nondet\.web\./) : null;
+        const returnMatch = trimmed.match(/^return\s+gl\.nondet\.web\./);
+
+        // Collect multi-line call (paren counting)
         let callLines = [line];
         let parenDepth = 0;
         for (const ch of line) {
           if (ch === "(") parenDepth++;
           if (ch === ")") parenDepth--;
         }
-
         let j = i + 1;
         while (parenDepth > 0 && j < lines.length) {
           callLines.push(lines[j]);
@@ -266,31 +322,65 @@ export function fixGenLayerContract(code: string): FixResult {
 
         const fullCall = callLines.join("\n");
 
-        if (webAssignMatch) {
-          const varName = webAssignMatch[1];
-          const execStart = fullCall.indexOf("gl.nondet.web.");
-          const execCall = fullCall.slice(execStart);
+        // Extract the web call part: everything from gl.nondet.web. onward
+        const webStart = fullCall.indexOf("gl.nondet.web.");
+        let webCall = fullCall.slice(webStart).trim();
 
+        // Strip any trailing .json() or .text — we'll add .text ourselves inside the lambda
+        webCall = webCall.replace(/\.(json\(\)|text)\s*$/, "");
+        // Also strip if .json() or .text appears before a trailing comma/paren
+        webCall = webCall.replace(/\.(json\(\)|text)\s*([,)])\s*$/, "$2");
+
+        // Build the wrapped call with .text inside lambda
+        const webCallWithText = webCall + ".text";
+        const task = "external data fetch";
+        const criteria = "Approve if response is valid non-empty text. Reject if empty or error.";
+
+        if (selfAssignMatch) {
+          const lhs = selfAssignMatch[1]; // "self.xxx"
+          newLines.push(
+            `${indent}${lhs} = gl.eq_principle.prompt_non_comparative(`,
+            `${indent}    lambda: ${webCallWithText},`,
+            `${indent}    task="${task}",`,
+            `${indent}    criteria="${criteria}"`,
+            `${indent})`
+          );
+          wrappedVars.add(lhs.replace("self.", ""));
+          changed5b = true;
+          changes.push(`🔧 Wrapped \`${lhs}\` web call with \`gl.eq_principle.prompt_non_comparative\``);
+        } else if (varAssignMatch) {
+          const varName = varAssignMatch[1];
           newLines.push(
             `${indent}${varName} = gl.eq_principle.prompt_non_comparative(`,
-            `${indent}    lambda: ${execCall},`,
-            `${indent}    task="external data fetch",`,
-            `${indent}    criteria="Approve if response is valid non-empty text or JSON. Reject if empty or error."`,
+            `${indent}    lambda: ${webCallWithText},`,
+            `${indent}    task="${task}",`,
+            `${indent}    criteria="${criteria}"`,
             `${indent})`
           );
+          wrappedVars.add(varName);
+          changed5b = true;
           changes.push(`🔧 Wrapped \`${varName}\` web call with \`gl.eq_principle.prompt_non_comparative\``);
-        } else if (webReturnMatch) {
-          const execStart = fullCall.indexOf("gl.nondet.web.");
-          const execCall = fullCall.slice(execStart);
-
+        } else if (returnMatch) {
           newLines.push(
             `${indent}return gl.eq_principle.prompt_non_comparative(`,
-            `${indent}    lambda: ${execCall},`,
-            `${indent}    task="external data fetch",`,
-            `${indent}    criteria="Approve if response is valid non-empty text or JSON. Reject if empty or error."`,
+            `${indent}    lambda: ${webCallWithText},`,
+            `${indent}    task="${task}",`,
+            `${indent}    criteria="${criteria}"`,
             `${indent})`
           );
-          changes.push(`🔧 Wrapped return web call with \`gl.eq_principle.prompt_non_comparative\``);
+          changed5b = true;
+          changes.push("🔧 Wrapped return web call with `gl.eq_principle.prompt_non_comparative`");
+        } else {
+          // Standalone call (no assignment, no return)
+          newLines.push(
+            `${indent}gl.eq_principle.prompt_non_comparative(`,
+            `${indent}    lambda: ${webCallWithText},`,
+            `${indent}    task="${task}",`,
+            `${indent}    criteria="${criteria}"`,
+            `${indent})`
+          );
+          changed5b = true;
+          changes.push("🔧 Wrapped standalone web call with `gl.eq_principle.prompt_non_comparative`");
         }
 
         i = j;
@@ -301,85 +391,99 @@ export function fixGenLayerContract(code: string): FixResult {
       i++;
     }
 
-    fixed = newLines.join("\n");
+    if (changed5b) {
+      fixed = newLines.join("\n");
+    }
+
+    // ─── Post-wrap cleanup: remove .json()/.text on wrapped variables ───
+    // After wrapping, the variable holds a string (consensus result), not a response object.
+    // So `data = response.json()` must become `data = response` (it's already text).
+    if (wrappedVars.size > 0) {
+      const cleanupLines = fixed.split("\n");
+      let cleanupChanged = false;
+      for (let idx = 0; idx < cleanupLines.length; idx++) {
+        const t = cleanupLines[idx].trim();
+        for (const v of wrappedVars) {
+          // Match: data = varname.json() or data = varname.text
+          if (t.includes(`${v}.json()`) || t.includes(`${v}.text`)) {
+            cleanupLines[idx] = cleanupLines[idx]
+              .replace(new RegExp(`\\b${v}\\.json\\(\\)`, "g"), v)
+              .replace(new RegExp(`\\b${v}\\.text`, "g"), v);
+            cleanupChanged = true;
+          }
+        }
+      }
+      if (cleanupChanged) {
+        fixed = cleanupLines.join("\n");
+        changes.push("🔧 Cleaned up `.json()`/`.text` on wrapped variable (already a string from consensus)");
+      }
     }
   }
 
   ///////////////////////////////////////////
-  // RULE 5c — Move .json()/.text inside consensus lambda for web calls
-  //           (deserialization must be consensus-validated, not post-hoc)
-  //           Preserves original accessor: .json() stays .json(), .text stays .text
-  //           Bare web calls (no accessor) get .text as safe default
+  // RULE 5c — Safety net: ensure .text inside ALL lambda web calls
+  //           Catches any pre-existing or Rule-4-produced lambdas
+  //           that have bare web calls without an accessor
   ///////////////////////////////////////////
 
   {
     const r5cLines = fixed.split("\n");
     let r5cChanged = false;
 
-    // Pass 1: Move existing .json()/.text accessors inside the lambda
     for (let i = 0; i < r5cLines.length; i++) {
       const trimmed = r5cLines[i].trim();
 
-      // Skip lines that are already inside a lambda definition
-      if (trimmed.includes("lambda:")) continue;
+      // Only target lambda lines that contain a web call
+      if (!trimmed.includes("lambda:") || !trimmed.includes("gl.nondet.web.")) continue;
 
-      // Match: return varName.json() or varName.json() or data = varName.json()
-      // Also handles: return varName.text or varName.text
-      // NOTE: No trailing \b — ) in json() is not a word char so \b fails after it
-      const accessorMatch = trimmed.match(/\b(\w+)\.(json\(\)|text)/);
-      if (!accessorMatch) continue;
+      // Skip if already has .text or .json()
+      if (trimmed.includes(".text") || trimmed.includes(".json()")) continue;
 
-      const varName = accessorMatch[1];
-      const accessor = accessorMatch[2]; // "json()" or "text"
+      // Try to add .text before the trailing comma
+      // Handle nested parens: find the LAST closing paren of the web call
+      const lambdaStart = trimmed.indexOf("lambda:");
+      const webStart = trimmed.indexOf("gl.nondet.web.", lambdaStart);
+      if (webStart < 0) continue;
 
-      // Look backward for: varName = gl.eq_principle... with lambda: gl.nondet.web...
-      let foundAssign = false;
-      let lambdaLineIdx = -1;
+      // Find the end of the web call by counting parens from the first ( after gl.nondet.web.xxxx
+      const afterMethod = trimmed.indexOf("(", webStart);
+      if (afterMethod < 0) continue;
 
-      for (let k = i - 1; k >= Math.max(0, i - 15); k--) {
-        const prevTrimmed = r5cLines[k].trim();
-
-        // Found the lambda line with a web call
-        if (prevTrimmed.includes("lambda:") && prevTrimmed.includes("gl.nondet.web.")) {
-          lambdaLineIdx = k;
-        }
-
-        // Found the assignment to this variable via eq_principle
-        if (prevTrimmed.startsWith(`${varName} = gl.eq_principle`)) {
-          foundAssign = true;
-          break;
+      let depth = 0;
+      let endIdx = -1;
+      for (let ci = afterMethod; ci < trimmed.length; ci++) {
+        if (trimmed[ci] === "(") depth++;
+        if (trimmed[ci] === ")") {
+          depth--;
+          if (depth === 0) {
+            endIdx = ci;
+            break;
+          }
         }
       }
 
-      if (foundAssign && lambdaLineIdx >= 0) {
-        // Move the ORIGINAL accessor inside the lambda — preserve .json() or .text
-        // .json() → keeps parsed dict (more accurate for API responses)
-        // .text  → keeps raw string (type-safe for -> str annotation)
-        r5cLines[lambdaLineIdx] = r5cLines[lambdaLineIdx].replace(
-          /(gl\.nondet\.web\.\w+\([^)]*\))\s*,/,
-          `$1.${accessor},`
-        );
-
-        // Simplify the usage line: remove .json() or .text accessor
-        r5cLines[i] = r5cLines[i].replace(`${varName}.${accessor}`, varName);
-
-        r5cChanged = true;
-        changes.push(`🔧 Moved .${accessor} inside consensus lambda (deserialization is now consensus-validated)`);
-      }
-    }
-
-    // Pass 2: Add .text to bare web calls in lambdas that have no accessor
-    // (safe default — raw response objects should not pass through consensus)
-    for (let i = 0; i < r5cLines.length; i++) {
-      const trimmed = r5cLines[i].trim();
-      if (trimmed.includes("lambda:") && trimmed.includes("gl.nondet.web.")) {
-        if (!trimmed.includes(".text") && !trimmed.includes(".json()")) {
-          r5cLines[i] = r5cLines[i].replace(
-            /(gl\.nondet\.web\.\w+\([^)]*\))\s*,/,
-            "$1.text,"
-          );
+      if (endIdx > 0) {
+        // Insert .text right after the closing paren of the web call
+        const originalLine = r5cLines[i];
+        // Find the same position in the original (non-trimmed) line
+        const origWebStart = originalLine.indexOf("gl.nondet.web.", originalLine.indexOf("lambda:"));
+        const origAfterMethod = originalLine.indexOf("(", origWebStart);
+        let origDepth = 0;
+        let origEndIdx = -1;
+        for (let ci = origAfterMethod; ci < originalLine.length; ci++) {
+          if (originalLine[ci] === "(") origDepth++;
+          if (originalLine[ci] === ")") {
+            origDepth--;
+            if (origDepth === 0) {
+              origEndIdx = ci;
+              break;
+            }
+          }
+        }
+        if (origEndIdx > 0) {
+          r5cLines[i] = originalLine.slice(0, origEndIdx + 1) + ".text" + originalLine.slice(origEndIdx + 1);
           r5cChanged = true;
-          changes.push("🔧 Added `.text` to bare web call inside lambda (safe default for consensus)");
+          changes.push("🔧 Added `.text` to web call inside lambda (consensus safety)");
         }
       }
     }
