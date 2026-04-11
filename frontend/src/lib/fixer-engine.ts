@@ -946,10 +946,9 @@ export function fixGenLayerContract(code: string): FixResult {
               stateVarName = returnVarName;
             }
 
-            // Infer type from variable name
-            const inferredType = ["price", "count", "total", "amount", "balance", "id", "index", "num"].some(
-              n => stateVarName.includes(n)
-            ) ? "u256" : "str";
+            // External web/AI data is always stored as str — safest for consensus
+            // .json() returns dict which can't be stored in typed state vars
+            const inferredType = "str";
 
             // Replace "return varName" with "self.stateVarName = varName"
             r15Lines[returnLineIdx] = r15Lines[returnLineIdx].replace(
@@ -957,9 +956,18 @@ export function fixGenLayerContract(code: string): FixResult {
               `self.${stateVarName} = ${returnVarName}`
             );
 
-            // Fix return type annotation: -> str  →  -> None
+            // Fix return type annotation: -> str/dict  →  -> None
             r15Lines[defIdx] = r15Lines[defIdx].replace(/\->\s*str\s*:/, "-> None:");
             r15Lines[defIdx] = r15Lines[defIdx].replace(/\->\s*dict\s*:/, "-> None:");
+
+            // Convert .json() to .text inside lambda web calls
+            // .text returns str (safe for state), .json() returns dict (type mismatch)
+            for (let j = i; j <= methodEndIdx; j++) {
+              if (r15Lines[j].includes("lambda:") && r15Lines[j].includes(".json()")) {
+                r15Lines[j] = r15Lines[j].replace(/\.json\(\)/g, ".text");
+                changes.push("🔧 Converted `.json()` → `.text` inside lambda (str is safer for state storage)");
+              }
+            }
 
             // Build output up to end of this method
             for (let j = i; j <= methodEndIdx; j++) {
@@ -978,7 +986,7 @@ export function fixGenLayerContract(code: string): FixResult {
 
             i = methodEndIdx + 1;
             r15Changed = true;
-            changes.push(`🔧 \`${methodName}\`: stored result in \`self.${stateVarName}\` instead of returning (write methods can't return data)`);
+            changes.push(`🔧 \`${methodName}\`: stored result in \`self.${stateVarName}\` (str) instead of returning`);
             changes.push(`🔧 Added \`${getterName}\` @gl.public.view getter`);
             continue;
           }
