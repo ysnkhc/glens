@@ -874,6 +874,8 @@ export function fixGenLayerContract(code: string): FixResult {
     const r15Out: string[] = [];
     let r15Changed = false;
     let i = 0;
+    // Track new state vars so we can add class-level declarations
+    const newStateVars: {name: string; type: string}[] = [];
 
     while (i < r15Lines.length) {
       const line = r15Lines[i];
@@ -943,6 +945,11 @@ export function fixGenLayerContract(code: string): FixResult {
               stateVarName = returnVarName;
             }
 
+            // Infer type from variable name
+            const inferredType = ["price", "count", "total", "amount", "balance", "id", "index", "num"].some(
+              n => stateVarName.includes(n)
+            ) ? "u256" : "str";
+
             // Replace "return varName" with "self.stateVarName = varName"
             r15Lines[returnLineIdx] = r15Lines[returnLineIdx].replace(
               `return ${returnVarName}`,
@@ -950,8 +957,8 @@ export function fixGenLayerContract(code: string): FixResult {
             );
 
             // Fix return type annotation: -> str  →  -> None
-            r15Lines[defIdx] = r15Lines[defIdx].replace(/->\s*str\s*:/, "-> None:");
-            r15Lines[defIdx] = r15Lines[defIdx].replace(/->\s*dict\s*:/, "-> None:");
+            r15Lines[defIdx] = r15Lines[defIdx].replace(/\->\s*str\s*:/, "-> None:");
+            r15Lines[defIdx] = r15Lines[defIdx].replace(/\->\s*dict\s*:/, "-> None:");
 
             // Build output up to end of this method
             for (let j = i; j <= methodEndIdx; j++) {
@@ -964,6 +971,9 @@ export function fixGenLayerContract(code: string): FixResult {
             r15Out.push(`${indent}@gl.public.view`);
             r15Out.push(`${indent}def ${getterName}(self) -> str:`);
             r15Out.push(`${bodyIndent}return self.${stateVarName}`);
+
+            // Track for class-level declaration
+            newStateVars.push({ name: stateVarName, type: inferredType });
 
             i = methodEndIdx + 1;
             r15Changed = true;
@@ -980,6 +990,41 @@ export function fixGenLayerContract(code: string): FixResult {
 
     if (r15Changed) {
       fixed = r15Out.join("\n");
+    }
+
+    // Add class-level state variable declarations for any new vars
+    if (newStateVars.length > 0) {
+      const declLines = fixed.split("\n");
+      // Find the last existing state variable declaration in the class body
+      // Pattern: indented "varname: type" lines before any def or decorator
+      let lastStateVarIdx = -1;
+      let stateVarIndent = "    ";
+      for (let idx = 0; idx < declLines.length; idx++) {
+        const t = declLines[idx].trim();
+        // Class-level state var: "    varname: type" (not inside a method)
+        if (/^\w+\s*:\s*(str|u256|i256|bool|TreeMap|DynArray)/.test(t)) {
+          lastStateVarIdx = idx;
+          stateVarIndent = declLines[idx].match(/^(\s*)/)?.[1] || "    ";
+        }
+        // Stop at first method or decorator (we've passed the state vars section)
+        if (t.startsWith("def ") || t.startsWith("@gl.") || t.startsWith("async def ")) break;
+      }
+
+      // Filter out vars already declared
+      const existingDecls = fixed;
+      const toAdd = newStateVars.filter(sv => {
+        const declPattern = new RegExp(`^\\s+${sv.name}\\s*:`, "m");
+        return !declPattern.test(existingDecls);
+      });
+
+      if (toAdd.length > 0 && lastStateVarIdx >= 0) {
+        const newDecls = toAdd.map(sv => `${stateVarIndent}${sv.name}: ${sv.type}`);
+        declLines.splice(lastStateVarIdx + 1, 0, ...newDecls);
+        fixed = declLines.join("\n");
+        for (const sv of toAdd) {
+          changes.push(`✅ Added state variable declaration \`${sv.name}: ${sv.type}\``);
+        }
+      }
     }
   }
 
