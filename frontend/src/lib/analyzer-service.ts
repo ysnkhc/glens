@@ -187,7 +187,8 @@ function isUserRejection(err: unknown): boolean {
     msg.includes("user canceled") ||
     msg.includes("request rejected") ||
     msg.includes("action_rejected") ||
-    msg.includes("user disapproved")
+    msg.includes("user disapproved") ||
+    msg.includes("transaction cancelled")
   );
 }
 
