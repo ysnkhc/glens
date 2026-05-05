@@ -8,82 +8,32 @@ interface NetworkSelectorProps {
   onNetworkChange: (network: NetworkType) => void;
 }
 
-export default function NetworkSelector({ network, onNetworkChange }: NetworkSelectorProps) {
+export default function NetworkSelector({ network: _network, onNetworkChange: _onNetworkChange }: NetworkSelectorProps) {
+  // Bradbury is the only verified network for this submission.
+  // Studio code is kept internally but hidden from the public selector.
+  void _network;
+  void _onNetworkChange;
+
   return (
     <div
-      className="flex items-center gap-0.5 p-0.5 rounded-lg"
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
       style={{
-        background: "var(--bg-depth-2)",
-        border: "1px solid var(--border-subtle)",
+        background: "rgba(45, 212, 191, 0.06)",
+        border: "1px solid rgba(45, 212, 191, 0.12)",
       }}
     >
-      {/* Studio button */}
-      <button
-        id="network-studio-btn"
-        onClick={() => onNetworkChange("studio")}
-        title="GenLayer Studio — fast & stable public network"
-        className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-md text-left transition-all duration-200 cursor-pointer"
-        style={{
-          background: network === "studio" ? "rgba(74, 222, 128, 0.08)" : "transparent",
-          border: network === "studio" ? "1px solid rgba(74, 222, 128, 0.15)" : "1px solid transparent",
-          boxShadow: network === "studio" ? "0 0 12px rgba(74, 222, 128, 0.06)" : "none",
-        }}
-      >
-        <span className="relative flex h-1.5 w-1.5">
-          {network === "studio" && (
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-50" />
-          )}
-          <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${
-            network === "studio" ? "bg-green-400" : "bg-slate-600"
-          }`} />
+      <span className="relative flex h-1.5 w-1.5">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-50" />
+        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-teal-400" />
+      </span>
+      <div>
+        <span className="text-[11px] font-semibold block leading-tight text-teal-300">
+          Bradbury
         </span>
-        <div>
-          <span className={`text-[11px] font-semibold block leading-tight ${
-            network === "studio" ? "text-green-400" : "text-slate-500"
-          }`}>
-            Studio
-          </span>
-          <span className={`text-[8px] block leading-tight ${
-            network === "studio" ? "text-green-500/60" : "text-slate-700"
-          }`}>
-            Recommended · ~35s
-          </span>
-        </div>
-      </button>
-
-      {/* Bradbury button */}
-      <button
-        id="network-bradbury-btn"
-        onClick={() => onNetworkChange("bradbury")}
-        title="Bradbury testnet — real LLM validators, may be slow"
-        className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-md text-left transition-all duration-200 cursor-pointer"
-        style={{
-          background: network === "bradbury" ? "rgba(251, 191, 36, 0.08)" : "transparent",
-          border: network === "bradbury" ? "1px solid rgba(251, 191, 36, 0.15)" : "1px solid transparent",
-          boxShadow: network === "bradbury" ? "0 0 12px rgba(251, 191, 36, 0.06)" : "none",
-        }}
-      >
-        <span className="relative flex h-1.5 w-1.5">
-          {network === "bradbury" && (
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-50" />
-          )}
-          <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${
-            network === "bradbury" ? "bg-amber-400" : "bg-slate-600"
-          }`} />
+        <span className="text-[8px] block leading-tight text-teal-500/60">
+          Verified on-chain
         </span>
-        <div>
-          <span className={`text-[11px] font-semibold block leading-tight ${
-            network === "bradbury" ? "text-amber-300" : "text-slate-500"
-          }`}>
-            Bradbury
-          </span>
-          <span className={`text-[8px] block leading-tight ${
-            network === "bradbury" ? "text-amber-500/60" : "text-slate-700"
-          }`}>
-            Experimental
-          </span>
-        </div>
-      </button>
+      </div>
     </div>
   );
 }

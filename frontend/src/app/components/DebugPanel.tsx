@@ -53,18 +53,15 @@ interface DebugPanelProps {
 }
 
 export default function DebugPanel({ className = "" }: DebugPanelProps) {
-  const [logs, setLogs] = useState<DebugLogEntry[]>([]);
+  const [logs, setLogs] = useState<DebugLogEntry[]>(() => GL_DEBUG ? getDebugLogs() : []);
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedEntries, setExpandedEntries] = useState<Set<number>>(new Set());
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [autoScroll, setAutoScroll] = useState(true);
 
-  // Don't render if debug is off
-  if (!GL_DEBUG) return null;
-
   // Subscribe to log updates
   useEffect(() => {
-    setLogs(getDebugLogs());
+    if (!GL_DEBUG) return;
     const unsubscribe = subscribeDebugLogs((newLogs) => {
       setLogs(newLogs);
     });
@@ -73,6 +70,7 @@ export default function DebugPanel({ className = "" }: DebugPanelProps) {
 
   // Auto-scroll to bottom
   useEffect(() => {
+    if (!GL_DEBUG) return;
     if (autoScroll && isExpanded) {
       const el = document.getElementById("debug-panel-log-container");
       if (el) el.scrollTop = el.scrollHeight;
@@ -96,6 +94,9 @@ export default function DebugPanel({ className = "" }: DebugPanelProps) {
       return next;
     });
   }, []);
+
+  // Don't render if debug is off (after all hooks)
+  if (!GL_DEBUG) return null;
 
   const filteredLogs = activeFilters.size === 0
     ? logs

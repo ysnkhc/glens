@@ -49,7 +49,7 @@ Every action requires one wallet signature. Results are verified on-chain by Gen
 ### Key Design Decisions
 
 - **No private keys** — The app uses the user's own Rabby/MetaMask wallet. Zero hardcoded secrets.
-- **Dual network** — Studio for fast iteration (~35s consensus), Bradbury for real test validators.
+- **Bradbury verified** — Deployed and consensus-tested on Bradbury testnet with real LLM validators.
 - **SDK bypass** — The GenLayer SDK's `waitForTransactionReceipt` is unreliable (enum mismatch). We use a custom `pollConsensusStatus()` that handles `FINALIZED`, `ACCEPTED`, and `UNDETERMINED` by name.
 - **Client-side first** — Structural analysis (parser, rules, risk) runs instantly in the browser. Only AI and consensus hit the chain.
 - **?debug=1** — Append `?debug=1` to the URL to reveal the full GenLayer Flow Inspector.
@@ -58,24 +58,27 @@ Every action requires one wallet signature. Results are verified on-chain by Gen
 
 ## Networks & Contracts
 
-### Studio (recommended for development)
-
-| Field | Value |
-|-------|-------|
-| Chain ID | `61999` |
-| RPC | `https://studio.genlayer.com/api` |
-| Contract | `0xa2c77099133E9b537a89edd8094239bd971Bf6bA` |
-
-### Bradbury Testnet
+### Bradbury Testnet (primary — verified)
 
 | Field | Value |
 |-------|-------|
 | Chain ID | `4221` |
 | RPC | `https://rpc-bradbury.genlayer.com` |
-| Contract | `0x4aa1046C8751e043bAEe76b4FD0F1D4188aD8C2e` |
+| Contract | `0x8f1E92cb540746F66F7650d88f7Cd9CF9F6D9f1D` |
 | Explorer | [explorer-bradbury.genlayer.com](https://explorer-bradbury.genlayer.com) |
 
-The app automatically switches your wallet to the selected network.
+**Live proof transactions:**
+
+| Tx Hash | Status |
+|---------|--------|
+| `0xee830fece2206f508f5b19ba7f836944dc55685ce4c3a60ab6460362a78f7fcb` | ACCEPTED |
+| `0x2542ca8589c51e6222e228d0fabc3771829a07cabbdccfb08a0d7528ad5c4d1e` | ACCEPTED / AGREED (6 validators, 76s) |
+
+### Studio (hidden — not part of current resubmission)
+
+Studio (`0xA3DA12a7Bf0f9161c0Bb1E6Ba1FBa4C548178f2C`, chain 61999) is kept in the codebase for future development but is hidden from the public UI. It was not redeployed or tested with the current contract fixes.
+
+The app defaults to Bradbury and automatically switches your wallet to chain 4221.
 
 ---
 
@@ -99,7 +102,7 @@ Each write triggers GenLayer consensus — validators independently execute the 
 
 - Node.js 18+
 - Rabby or MetaMask browser wallet
-- GEN tokens on Studio or Bradbury (for gas)
+- GEN tokens on Bradbury testnet (for gas)
 
 ### Run Locally
 
@@ -155,7 +158,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | **Frontend** | Next.js 16, React 19, TypeScript |
 | **Styling** | Vanilla CSS (glassmorphism design system) |
 | **Editor** | Monaco Editor (VS Code engine) |
-| **Blockchain** | GenLayer Studio + Bradbury |
+| **Blockchain** | GenLayer Bradbury Testnet |
 | **SDK** | `genlayer-js` |
 | **Wallet** | Rabby / MetaMask (EIP-1193) |
 | **Consensus** | 5 validators · `gl.eq_principle` · up to 3 rotation rounds |
@@ -187,8 +190,7 @@ AGREED  DISAGREED
 App reads result from contract state
 ```
 
-Studio typically reaches consensus in **~35 seconds**.
-Bradbury typically takes **60–180 seconds**.
+Bradbury typically reaches consensus in **60–200 seconds**.
 
 ---
 

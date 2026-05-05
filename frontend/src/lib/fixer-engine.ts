@@ -26,9 +26,6 @@ export function fixGenLayerContract(code: string): FixResult {
   let fixed = code;
   const changes: string[] = [];
 
-  // Pre-parse to get structured info for smarter fixes
-  const preParsed = parseContract(code);
-
   ///////////////////////////////////////////
   // RULE 1 — Ensure genlayer import exists
   ///////////////////////////////////////////
@@ -44,9 +41,6 @@ export function fixGenLayerContract(code: string): FixResult {
   ///////////////////////////////////////////
 
   if (!fixed.includes("(gl.Contract)") && !fixed.includes("(Contract)")) {
-    // Re-parse after Rule 1 (import may have been added)
-    const freshParsed = parseContract(fixed);
-
     // Find ALL class definitions in the code
     const classRegex = /^(\s*)class\s+(\w+)\s*(?:\(([^)]*)\))?\s*:/gm;
     let match;
@@ -87,7 +81,7 @@ export function fixGenLayerContract(code: string): FixResult {
   //          (improved multi-line support)
   ///////////////////////////////////////////
 
-  if (fixed.includes("gl.nondet.exec_prompt") && !fixed.includes("gl.eq_principle")) {
+  if (fixed.includes("gl.nondet.exec_prompt")) {
     // Strategy: line-by-line scan for assignment or return patterns
     const lines = fixed.split("\n");
     const newLines: string[] = [];
@@ -103,10 +97,33 @@ export function fixGenLayerContract(code: string): FixResult {
       const returnMatch = trimmed.match(/^return\s+gl\.nondet\.exec_prompt\(/);
 
       if (assignMatch || returnMatch) {
+        // Per-call check: skip if already inside an eq_principle block
+        let insideEqPrinciple = false;
+        if (trimmed.includes("eq_principle")) {
+          insideEqPrinciple = true;
+        } else {
+          let backParenDepth = 0;
+          for (let k = i - 1; k >= Math.max(0, i - 20); k--) {
+            const prevTrimmed = lines[k].trim();
+            for (let ci = prevTrimmed.length - 1; ci >= 0; ci--) {
+              if (prevTrimmed[ci] === ")") backParenDepth++;
+              if (prevTrimmed[ci] === "(") backParenDepth--;
+            }
+            if (prevTrimmed.includes("eq_principle") && backParenDepth < 0) {
+              insideEqPrinciple = true;
+              break;
+            }
+          }
+        }
+        if (insideEqPrinciple) {
+          newLines.push(line);
+          i++;
+          continue;
+        }
         const indent = line.match(/^(\s*)/)?.[1] || "    ";
 
         // Collect all lines of this call (find the matching closing paren)
-        let callLines = [line];
+        const callLines = [line];
         let parenDepth = 0;
         for (const ch of line) {
           if (ch === "(") parenDepth++;
@@ -153,11 +170,19 @@ export function fixGenLayerContract(code: string): FixResult {
           criteria = "Approve ONLY if output is valid JSON with exactly one key 'result' (a short string under 20 words), no other keys, no markdown, no extra text. Reject otherwise.";
         }
 
+        // Inject response_format='json' into exec_prompt if not already present
+        // (all auto-fix criteria expect JSON output)
+        const execStart = fullCall.indexOf("gl.nondet.exec_prompt");
+        let execCall = fullCall.slice(execStart);
+        if (!execCall.includes("response_format")) {
+          const lp = execCall.lastIndexOf(")");
+          if (lp > 0) {
+            execCall = execCall.slice(0, lp).trimEnd() + `,\n${indent}        response_format='json')`;
+          }
+        }
+
         if (assignMatch) {
           const varName = assignMatch[1];
-          // Extract everything after "varName = "
-          const execStart = fullCall.indexOf("gl.nondet.exec_prompt");
-          const execCall = fullCall.slice(execStart);
 
           newLines.push(
             `${indent}${varName} = gl.eq_principle.prompt_non_comparative(`,
@@ -168,9 +193,6 @@ export function fixGenLayerContract(code: string): FixResult {
           );
           changes.push(`🔧 Wrapped \`${varName}\` AI call with \`gl.eq_principle.prompt_non_comparative\` (${task.toLowerCase()})`);
         } else if (returnMatch) {
-          const execStart = fullCall.indexOf("gl.nondet.exec_prompt");
-          const execCall = fullCall.slice(execStart);
-
           newLines.push(
             `${indent}return gl.eq_principle.prompt_non_comparative(`,
             `${indent}    lambda: ${execCall},`,
@@ -304,7 +326,7 @@ export function fixGenLayerContract(code: string): FixResult {
         const returnMatch = trimmed.match(/^return\s+gl\.nondet\.web\./);
 
         // Collect multi-line call (paren counting)
-        let callLines = [line];
+        const callLines = [line];
         let parenDepth = 0;
         for (const ch of line) {
           if (ch === "(") parenDepth++;
@@ -869,7 +891,6 @@ export function fixGenLayerContract(code: string): FixResult {
 
           // Scan method body to infer return type
           let hasReturn = false;
-          let returnsSelf = false;
           for (let j = i + 1; j < retLines.length && j < i + 20; j++) {
             const bodyLine = retLines[j].trim();
             const bodyIndent = retLines[j].match(/^(\s*)/)?.[1]?.length || 0;
@@ -877,7 +898,6 @@ export function fixGenLayerContract(code: string): FixResult {
             if (bodyIndent < methodIndent && bodyLine.length > 0 && !bodyLine.startsWith("#") && !bodyLine.startsWith('"""')) break;
             if (bodyLine.startsWith("return ")) {
               hasReturn = true;
-              if (bodyLine.includes("self.")) returnsSelf = true;
             }
           }
 
@@ -887,7 +907,6 @@ export function fixGenLayerContract(code: string): FixResult {
           }
 
           // Replace the line — add -> Type before the colon
-          const indent = line.match(/^(\s*)/)?.[1] || "";
           const newLine = line.replace(/\)\s*:\s*$/, `) -> ${returnType}:`);
           newRetLines.push(newLine);
           continue;
@@ -932,7 +951,6 @@ export function fixGenLayerContract(code: string): FixResult {
           promptLower.includes("no markdown");
 
         if (!isAlreadyStrict) {
-          const indent = line.match(/^(\s*)/)?.[1] || "        ";
 
           // Extract any f-string variables from the original prompt
           const fVars = [...promptText.matchAll(/\{(\w+)\}/g)].map(m => m[1]);
@@ -1128,7 +1146,6 @@ export function fixGenLayerContract(code: string): FixResult {
 
       // Detect @gl.public.write decorator
       if (trimmed === "@gl.public.write") {
-        const decoratorIdx = i;
         const indent = line.match(/^(\s*)/)?.[1] || "    ";
         const bodyIndent = indent + "    ";
 
@@ -1345,7 +1362,6 @@ export function fixGenLayerContract(code: string): FixResult {
       }
 
       if (needsFix) {
-        const indent = r16Lines[i].match(/^(\s*)/)?.[1] || "        ";
         // Find the assignment line: `data = response` → `data = json.loads(response)`
         for (let k = i - 1; k >= Math.max(0, i - 10); k--) {
           const prevTrimmed = r16Lines[k].trim();
@@ -1424,7 +1440,7 @@ export function fixGenLayerContract(code: string): FixResult {
   const validAfterFix = afterReport.issues.length === 0;
 
   if (validAfterFix && changes.length > 1) {
-    changes.push("✅ Post-fix validation: Valid GenLayer contract");
+    changes.push("✅ Post-fix static validation: No critical static issues found");
   } else if (!validAfterFix) {
     changes.push(`⚠️ Post-fix validation: ${afterReport.issues.length} issue(s) remaining`);
   }

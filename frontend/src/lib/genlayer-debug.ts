@@ -13,7 +13,7 @@
 
 // ─── Debug Flag ────────────────────────────────────────────────
 
-export const GL_DEBUG = true;
+export const GL_DEBUG = process.env.NEXT_PUBLIC_GL_DEBUG === "true";
 
 // ─── Log Store (for UI DebugPanel) ─────────────────────────────
 

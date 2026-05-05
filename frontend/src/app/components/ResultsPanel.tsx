@@ -264,7 +264,7 @@ export default function ResultsPanel({
   consensusStatus,
   consensusElapsed,
   onCancelConsensus,
-  network = "studio",
+  network = "bradbury",
 }: ResultsPanelProps) {
   const [showFixedCode, setShowFixedCode] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);

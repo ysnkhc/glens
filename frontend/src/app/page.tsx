@@ -24,6 +24,7 @@ import { logGL } from "@/lib/genlayer-debug";
 import type {
   AnalysisResult,
   SimulationResult,
+  FixResult,
 } from "@/lib/analyzer-service";
 import { predictConsensus } from "@/lib/consensus-predictor";
 import type { ConsensusPrediction } from "@/lib/consensus-predictor";
@@ -52,7 +53,7 @@ export default function Home() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
   const [fixToast, setFixToast] = useState<string | null>(null);
-  const [fixResult, setFixResult] = useState<any | null>(null);
+  const [fixResult, setFixResult] = useState<FixResult | null>(null);
   const [activePanel, setActivePanel] = useState<"editor" | "results">("editor");
 
 
@@ -71,8 +72,8 @@ export default function Home() {
     }
   }, [code]);
 
-  // Network selection — default to Studio (reliable local env)
-  const [network, setNetwork] = useState<NetworkType>("studio");
+  // Network selection — default to Bradbury (verified deployment)
+  const [network, setNetwork] = useState<NetworkType>("bradbury");
 
   // Wallet state
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
@@ -84,7 +85,6 @@ export default function Home() {
     getConnectedAddress().then((addr) => {
       if (addr) setWalletAddress(addr);
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Listen for account changes
@@ -227,7 +227,8 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
-  }, [code, walletAddress, isBusy]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, walletAddress, isBusy, network]);
 
   // ─── Explain ─────────────────────────────────────────────────
 
@@ -257,7 +258,7 @@ export default function Home() {
     } finally {
       setIsExplaining(false);
     }
-  }, [code, walletAddress, isBusy]);
+  }, [code, walletAddress, isBusy, network]);
 
   // ─── Simulate ────────────────────────────────────────────────
 
@@ -353,7 +354,7 @@ export default function Home() {
       setIsSimulating(false);
       abortRef.current = null;
     }
-  }, [code, walletAddress, isBusy, result?.risk_level, prediction?.risk]);
+  }, [code, walletAddress, isBusy, result?.risk_level, prediction?.risk, network]);
 
   const handleCancelConsensus = useCallback(() => {
     if (abortRef.current) {
@@ -475,7 +476,7 @@ export default function Home() {
     } finally {
       setIsFixing(false);
     }
-  }, [code, walletAddress, isBusy]);
+  }, [code, walletAddress, isBusy, network]);
 
   // ─── Sample Select ───────────────────────────────────────────
 

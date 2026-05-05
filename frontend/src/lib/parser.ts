@@ -150,13 +150,13 @@ export function parseContract(sourceCode: string): ParseResult {
     // from X import Y
     const fromImport = line.match(/^from\s+(\S+)\s+import\s+(.+)/);
     if (fromImport) {
-      const module = fromImport[1];
+      const importModule = fromImport[1];
       const names = fromImport[2].split(",").map((n) => n.trim());
       for (const name of names) {
         if (name === "*") {
-          result.imports.push(`${module}.*`);
+          result.imports.push(`${importModule}.*`);
         } else {
-          result.imports.push(`${module}.${name}`);
+          result.imports.push(`${importModule}.${name}`);
         }
       }
     }
@@ -253,7 +253,7 @@ function extractClassBody(
 ): void {
   const classIndent = getIndent(lines[classLineIdx]);
   let currentDecorators: string[] = [];
-  let lastDecoratorLine = -1;
+  // (decorator line tracking reserved for future use)
 
   for (let i = classLineIdx + 1; i < lines.length; i++) {
     const line = lines[i];
@@ -271,7 +271,6 @@ function extractClassBody(
     // Decorator
     if (trimmed.startsWith("@")) {
       currentDecorators.push(trimmed.replace("@", ""));
-      lastDecoratorLine = i;
       continue;
     }
 

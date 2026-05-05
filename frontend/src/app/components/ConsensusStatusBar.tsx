@@ -19,6 +19,7 @@ const STATUS_LABEL: Record<string, string> = {
   UNDETERMINED:  "Validators could not agree",
   LEADER_TIMEOUT:"Lead validator timed out",
   CANCELED:      "Transaction cancelled",
+  UNKNOWN_STATUS: "Waiting for status update…",
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -32,6 +33,7 @@ const STATUS_COLOR: Record<string, string> = {
   UNDETERMINED:  "#f97316",
   LEADER_TIMEOUT:"#f97316",
   CANCELED:      "var(--text-muted)",
+  UNKNOWN_STATUS: "var(--color-primary)",
 };
 
 const TERMINAL = ["FINALIZED", "ACCEPTED", "UNDETERMINED", "LEADER_TIMEOUT", "CANCELED"];

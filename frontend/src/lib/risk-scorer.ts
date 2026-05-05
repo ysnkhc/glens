@@ -9,7 +9,7 @@
 
 import type { ParseResult } from "./parser";
 import type { RulesReport } from "./rules-engine";
-import { extractPrompts, isPromptConstrained } from "./prompt-utils";
+import { extractPrompts } from "./prompt-utils";
 
 export function scoreRisk(parsed: ParseResult, report: RulesReport, sourceCode?: string): "LOW" | "MEDIUM" | "HIGH" {
   const errorCount = report.issues.length;

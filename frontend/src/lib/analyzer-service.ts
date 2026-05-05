@@ -9,7 +9,7 @@
 
 import { CONTRACT_ADDRESS, createWriteClient, getLastEvmTxHash, pollForReceipt, extractGenLayerTxId, pollConsensusStatus } from "./genlayer";
 import type { NetworkType } from "./genlayer";
-import { parseContract, buildMetadata } from "./parser";
+import { parseContract } from "./parser";
 import { runRules } from "./rules-engine";
 import { scoreRisk } from "./risk-scorer";
 import { fixGenLayerContract } from "./fixer-engine";
@@ -17,21 +17,13 @@ import { computeAnalysisCore, computeImprovement, RISK_SCORES } from "./analysis
 import type { AnalysisCore } from "./analysis-core";
 import type { ParseResult } from "./parser";
 import type { RulesReport } from "./rules-engine";
-import { TransactionStatus } from "genlayer-js/types";
-import { logGL, inspectPayload, createTxTimer, detectConsensusFailure, showRawResult, clearDebugLogs } from "./genlayer-debug";
+import { logGL, createTxTimer, detectConsensusFailure, showRawResult, clearDebugLogs } from "./genlayer-debug";
 import {
-  validateArgs,
-  truncatePayload,
   safeParseStrict,
   validateAnalysisOutput,
-  validateSimulationVerdict,
-  validateFixOutput,
   validateFixedCode,
   getReadMethod,
 } from "./contract-interface";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type GenLayerClient = any;
 
 // ─── Fix 1: Global Nonce Lock ──────────────────────────────────
 // Serializes ALL writeContract calls to prevent nonce collisions.
@@ -40,7 +32,6 @@ type GenLayerClient = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let pendingTx: Promise<any> | null = null;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function sendSerialTransaction<T>(fn: () => Promise<T>): Promise<T> {
   // Wait for any in-flight transaction to complete first
   if (pendingTx) await pendingTx.catch(() => {});
@@ -226,7 +217,7 @@ function isContractReady(walletAddress?: string | null, network: NetworkType = "
 }
 
 // ─── Prompt Utilities (shared module) ──────────────────────────
-import { extractPrompts, CONSTRAINED_KEYWORDS, isPromptConstrained } from "./prompt-utils";
+import { extractPrompts, isPromptConstrained } from "./prompt-utils";
 
 
 // ─── Client-Side AI Analysis (STRICT) ──────────────────────────
@@ -1087,7 +1078,7 @@ export async function simulateConsensus(
           if (!genLayerTxId) {
             throw new Error(`SDK bypass failed: no txId in receipt logs. SDK error: ${writeMsg}`);
           }
-        } catch (receiptErr) {
+        } catch {
           throw new Error(`writeContract failed and recovery failed: ${writeMsg}`);
         }
       } else {
@@ -1264,7 +1255,7 @@ export async function simulateConsensus(
         actualStatus = failedReceipt?.status || null;
         console.log("ACTUAL FAILED STATUS:", actualStatus);
         logGL("SIMULATE → ACTUAL STATUS", { actualStatus, txHash });
-      } catch (_) {
+      } catch {
         console.log("RECEIPT LOOKUP FAILED — using error string classifier");
       }
     } else {
@@ -1550,7 +1541,6 @@ export async function fixContract(code: string, walletAddress?: string | null, n
       }
 
       // ─── v6: AI returns minimal fix categories (category + severity only) ───
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const aiCategories: Array<{category: string; severity: string}> = Array.isArray(data.fixes) ? data.fixes : [];
 
       logGL("FIX → AI CATEGORIES", {

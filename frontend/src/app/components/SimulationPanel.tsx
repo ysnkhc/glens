@@ -123,7 +123,7 @@ function VerdictRing({ color, size = 56 }: { color: string; size?: number }) {
   );
 }
 
-export default function SimulationPanel({ result, isLoading, onSimulate, network = "studio" }: SimulationPanelProps) {
+export default function SimulationPanel({ result, isLoading, onSimulate, network = "bradbury" }: SimulationPanelProps) {
   const networkLabel = network === "studio" ? "Studio" : "Bradbury";
   const verdict = result ? (VERDICT[result.consensus] ?? VERDICT["FAILED"]) : null;
   const isOnChain =

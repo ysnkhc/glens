@@ -1,0 +1,28 @@
+GenLayer Bradbury Testnet Deployment — SUCCESS
+================================================
+
+Date:            2025-06-27
+Git Commit:      b4f0b95e7d57c6516640751c886fb9d77ff84e7e
+Network:         Genlayer Bradbury Testnet
+Chain ID:        4221
+RPC:             https://rpc-bradbury.genlayer.com
+Deployer:        0x784ab8624e47c45577c62a15f3041eb43997f0ec
+Contract File:   contracts/ai_debugger_v2.py
+
+Deployment Result:
+  Status:           ACCEPTED
+  Result:           AGREE
+  Contract Address: 0x8f1E92cb540746F66F7650d88f7Cd9CF9F6D9f1D
+  Transaction Hash: 0x66f2034ea58ef3d134d2ed597c76f22b16054b138f15945ec5db528db5a428ca
+  Validators:       3
+
+CLI Command:
+  npx genlayer deploy --contract contracts/ai_debugger_v2.py
+
+Previous Bradbury Address (now stale):
+  0xE1d4D9DF1AbA3e2E64E13d733700d463732A7cDA
+
+Notes:
+  - First attempt failed (tx 0xeb72cc...65c7) due to validator timeout / sigterm
+  - Second attempt succeeded with ACCEPTED/AGREE consensus
+  - genvm-lint not available locally; contract manually verified against GenLayer docs

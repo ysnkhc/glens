@@ -1,6 +1,7 @@
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 
 from genlayer import *
+import re
 
 
 class AIContractDebugger(gl.Contract):
@@ -75,7 +76,8 @@ class AIContractDebugger(gl.Contract):
                 "\"determinism_risk\": \"LOW or MEDIUM or HIGH\", "
                 "\"consensus_risk\": \"LOW or MEDIUM or HIGH\", "
                 "\"reasoning\": \"2-3 sentence analysis explaining the key findings\", "
-                "\"fix_suggestions\": [\"actionable suggestion 1\", \"actionable suggestion 2\"]}"
+                "\"fix_suggestions\": [\"actionable suggestion 1\", \"actionable suggestion 2\"]}",
+                response_format='json'
             ),
             task="Security audit of GenLayer contract.",
             criteria=(
@@ -129,14 +131,13 @@ class AIContractDebugger(gl.Contract):
 
         def _execute_and_extract():
             raw = gl.nondet.exec_prompt(safe_input)
-            import re
             words = re.findall(r'[A-Za-z0-9]+', raw.strip())
             if not words:
                 raise Exception("Empty LLM output -- rotate this validator")
             first_word = words[0].upper()
             return first_word
 
-        result = gl.eq_principle(
+        result = gl.eq_principle.prompt_non_comparative(
             _execute_and_extract,
             task="Execute prompt and extract first word of output",
             criteria="Outputs are equivalent if the first meaningful word is identical"
@@ -183,7 +184,8 @@ class AIContractDebugger(gl.Contract):
                 "- Only include categories for issues that ACTUALLY EXIST in the code\n"
                 "- Do NOT invent new category IDs\n"
                 "- Do NOT add any extra fields like description, priority, summary, or confidence\n"
-                "Return ONLY valid JSON. No markdown, no code blocks."
+                "Return ONLY valid JSON. No markdown, no code blocks.",
+                response_format='json'
             ),
             task="List issue categories in contract.",
             criteria=(

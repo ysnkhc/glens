@@ -50,10 +50,6 @@ export function computeAnalysisCore(parsed: ParseResult): AnalysisCore {
   const usesWrongExecPrompt = aiCalls.some(
     (c) => c === WRONG_EXEC || (c === "gl.exec_prompt" && !c.includes("nondet"))
   );
-  const hasBareExecPrompt = aiCalls.some(
-    (c) => c === "exec_prompt"
-  );
-
   // Parser detects eq_principle, prompt_string, llm, completion as AI too
   const hasAI = parsed.aiUsages.length > 0;
   const usesEqPrinciple = parsed.usesEqPrinciple;

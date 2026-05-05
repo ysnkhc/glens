@@ -112,39 +112,7 @@ export default function Header({ walletAddress, isConnecting, onConnect, onDisco
           {/* Network Selector */}
           <NetworkSelector network={network} onNetworkChange={onNetworkChange} />
 
-          {/* Network status chip */}
-          {network === "studio" && (
-            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[10px] font-semibold"
-              style={{
-                background: "rgba(74, 222, 128, 0.06)",
-                border: "1px solid rgba(74, 222, 128, 0.12)",
-                color: "#4ade80",
-              }}
-            >
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-50" />
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-400" />
-              </span>
-              Studio — fast &amp; reliable
-            </div>
-          )}
-
-          {network === "bradbury" && (
-            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[10px] font-semibold"
-              style={{
-                background: "rgba(251, 191, 36, 0.06)",
-                border: "1px solid rgba(251, 191, 36, 0.12)",
-                color: "#fbbf24",
-              }}
-            >
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                <line x1="12" y1="9" x2="12" y2="13" />
-                <line x1="12" y1="17" x2="12.01" y2="17" />
-              </svg>
-              Real validators — 2–5 min
-            </div>
-          )}
+          {/* Network status — Bradbury only for this submission */}
 
           {/* Wallet Section */}
           {walletAddress ? (
@@ -205,14 +173,14 @@ export default function Header({ walletAddress, isConnecting, onConnect, onDisco
                   <div className="px-4 py-2.5" style={{ borderBottom: "1px solid rgba(45, 212, 191, 0.06)" }}>
                     <div className="flex items-center justify-between">
                       <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Network</span>
-                      <span className={`text-[11px] font-bold ${network === "studio" ? "text-green-400" : "text-amber-400"}`}>
-                        {network === "studio" ? "GenLayer Studio" : "GenLayer Bradbury"}
+                      <span className="text-[11px] font-bold text-teal-400">
+                        GenLayer Bradbury
                       </span>
                     </div>
                     <div className="flex items-center justify-between mt-1">
                       <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>Chain ID</span>
                       <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
-                        {network === "studio" ? "61999" : "4221"}
+                        4221
                       </span>
                     </div>
                   </div>

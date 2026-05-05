@@ -22,7 +22,7 @@ export type NetworkType = "bradbury" | "studio";
  * Contract addresses per network.
  */
 export const CONTRACT_ADDRESS: Record<NetworkType, string> = {
-  bradbury: "0xE1d4D9DF1AbA3e2E64E13d733700d463732A7cDA",
+  bradbury: "0x8f1E92cb540746F66F7650d88f7Cd9CF9F6D9f1D",
   studio:   "0xA3DA12a7Bf0f9161c0Bb1E6Ba1FBa4C548178f2C",
 };
 
@@ -200,11 +200,9 @@ export async function pollConsensusStatus(
   const maxTimeout = 20 * 60 * 1000; // 20 minutes — gives validators much more time for AI consensus
   const start = Date.now();
   let lastStatus = "";
-  let pollCount = 0;
 
   console.log(`🔄 Consensus polling started (${network}, timeout: ${maxTimeout / 60000}min)`);
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     if (signal?.aborted) return { consensus: "CANCELLED", txId, status: "CANCELLED" };
     const elapsed = Date.now() - start;
@@ -222,7 +220,6 @@ export async function pollConsensusStatus(
       };
     }
 
-    pollCount++;
     try {
       const tx = await client.getTransaction({ hash: txId });
       if (!tx) {
@@ -230,32 +227,38 @@ export async function pollConsensusStatus(
         await new Promise(r => setTimeout(r, pollInterval));
         continue;
       }
-      const statusName = tx.statusName || "";
-      const resultName = tx.resultName || "";
+      const statusName = tx.statusName || tx.status_name || "";
+      const resultName = tx.resultName || tx.result_name || "";
+      // Guard: never propagate blank status
+      const safeStatus = statusName.trim() || "UNKNOWN_STATUS";
       // Only log on state transitions to reduce noise
-      if (statusName !== lastStatus) {
-        console.log(`🔄 ${lastStatus || "PENDING"} → ${statusName} (${(elapsed / 1000).toFixed(0)}s)`);
-        lastStatus = statusName;
-        if (onProgress) onProgress(statusName, elapsed);
+      if (safeStatus !== lastStatus) {
+        if (safeStatus === "UNKNOWN_STATUS") {
+          console.warn(`🔄 ${lastStatus || "PENDING"} → UNKNOWN_STATUS (${(elapsed / 1000).toFixed(0)}s) raw:`, JSON.stringify(tx));
+        } else {
+          console.log(`🔄 ${lastStatus || "PENDING"} → ${safeStatus} (${(elapsed / 1000).toFixed(0)}s)`);
+        }
+        lastStatus = safeStatus;
+        if (onProgress) onProgress(safeStatus, elapsed);
       }
-      if (TERMINAL_AGREED.includes(statusName)) {
-        console.log(`✅ Consensus reached: ${statusName} (${(elapsed / 1000).toFixed(0)}s)`);
+      if (TERMINAL_AGREED.includes(safeStatus)) {
+        console.log(`✅ Consensus reached: ${safeStatus} (${(elapsed / 1000).toFixed(0)}s)`);
         // ACCEPTED  = validators agreed after appeal rounds (resultName is often empty)
         // FINALIZED = validators agreed in first round (resultName = "AGREE")
         // EXECUTED  = Bradbury terminal success status
         // All are genuine consensus agreement — never map to DISAGREED
-        const isAgreed = statusName === "ACCEPTED" || statusName === "EXECUTED" || resultName === "AGREE" || resultName === "";
+        const isAgreed = safeStatus === "ACCEPTED" || safeStatus === "EXECUTED" || resultName === "AGREE" || resultName === "";
         return {
           consensus: isAgreed ? "AGREED" : "DISAGREED",
-          txId, status: statusName, statusName, resultName,
+          txId, status: safeStatus, statusName: safeStatus, resultName,
           executionResult: tx.txExecutionResultName, data: tx,
         };
       }
-      if (TERMINAL_FAILED.includes(statusName)) {
-        console.log(`❌ Consensus failed: ${statusName} (${(elapsed / 1000).toFixed(0)}s)`);
-        return { consensus: "DISAGREED", txId, status: statusName, statusName, resultName, data: tx };
+      if (TERMINAL_FAILED.includes(safeStatus)) {
+        console.log(`❌ Consensus failed: ${safeStatus} (${(elapsed / 1000).toFixed(0)}s)`);
+        return { consensus: "DISAGREED", txId, status: safeStatus, statusName: safeStatus, resultName, data: tx };
       }
-    } catch (err) {
+    } catch {
       if (signal?.aborted) return { consensus: "CANCELLED", txId, status: "CANCELLED" };
       // Transient poll error — retry silently
     }
@@ -272,7 +275,6 @@ function createHybridProvider(rpcUrl: string): EIP1193Provider {
       if (method === "eth_sendTransaction") {
         const ethereum = getEthereum();
         if (!ethereum) throw new Error("Wallet not available for signing");
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const _txData = (params as any)?.[0]?.data as string | undefined;
         void _txData; // calldata available for debug if needed
