@@ -132,12 +132,12 @@ Studio is hidden from the public UI for this resubmission because Bradbury is th
 | TypeScript | ✅ PASS — 0 errors |
 | ESLint | ✅ PASS — 0 errors, 1 harmless warning (`<img>` in Header.tsx) |
 | Build | ✅ PASS |
-| GenVM lint | ❓ Unavailable locally / not claimed as passed |
+| GenVM lint | ✅ PASS — genvm-linter v0.10.0: 3 checks, 0 errors, 0 warnings |
 | Bradbury on-chain flow | ✅ PASS — 2 ACCEPTED txs |
 | Tx IDs recorded | ✅ `0xee830f...7fcb` + `0x2542ca...4d1e` |
 | Repo/frontend/proof match Bradbury contract | ✅ `0x8f1E92cb540746F66F7650d88f7Cd9CF9F6D9f1D` |
 
-- ✅ Contract uses correct GenVM APIs (`eq_principle.prompt_non_comparative`, `response_format='json'`)
+- ✅ Contract uses correct GenVM APIs (`gl.vm.run_nondet_unsafe`, `gl.nondet.exec_prompt`, `response_format='json'`)
 - ✅ Deployed to Bradbury with ACCEPTED consensus
 - ✅ On-chain flow tested end-to-end: wallet → tx → consensus → result
 - ✅ README and frontend addresses match Bradbury deployed contract

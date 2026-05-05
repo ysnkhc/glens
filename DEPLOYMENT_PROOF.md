@@ -125,7 +125,7 @@ Studio is hidden from the public UI for this resubmission because Bradbury is th
 | README matches frontend | ✅ YES |
 | Deployment tx hash recorded | ✅ YES |
 | Deployed contract matches fixed code (Bradbury) | ✅ YES |
-| genvm-lint passes | ❓ NOT INSTALLED — manually verified |
+| genvm-lint passes | ✅ **PASSED** — genvm-linter v0.10.0: 3 checks passed, 0 errors, 0 warnings |
 | On-chain flow tested | ✅ **PASSED** — 2 successful ACCEPTED txs on Bradbury |
 
 ## Full Deployment Output
