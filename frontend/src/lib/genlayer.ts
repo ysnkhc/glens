@@ -185,6 +185,19 @@ export interface ConsensusResult {
   data?: any;
 }
 
+/** Patterns that indicate a transient RPC failure (retryable). */
+const RETRYABLE_PATTERNS = [
+  "internal error", "eth_call", "network", "timeout",
+  "fetch failed", "rate limit", "failed to fetch",
+  "econnreset", "econnrefused", "socket hang up",
+  "502", "503", "504", "getaddrinfo",
+];
+
+function isRetryableError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return RETRYABLE_PATTERNS.some(p => msg.includes(p));
+}
+
 const TERMINAL_AGREED = ["FINALIZED", "ACCEPTED", "EXECUTED"];
 const TERMINAL_FAILED = ["UNDETERMINED", "LEADER_TIMEOUT", "CANCELED"];
 
@@ -198,10 +211,13 @@ export async function pollConsensusStatus(
 ): Promise<ConsensusResult> {
   const pollInterval = network === "bradbury" ? 10000 : 30000;
   const maxTimeout = 20 * 60 * 1000; // 20 minutes — gives validators much more time for AI consensus
+  const maxConsecutiveRpcErrors = 10;
+  const rpcRetryBackoff = 8000; // 8 s backoff after RPC error
   const start = Date.now();
   let lastStatus = "";
+  let consecutiveRpcErrors = 0;
 
-  console.log(`🔄 Consensus polling started (${network}, timeout: ${maxTimeout / 60000}min)`);
+  console.log(`🔄 Consensus polling started (${network}, timeout: ${maxTimeout / 60000}min, txId: ${txId})`);
 
   while (true) {
     if (signal?.aborted) return { consensus: "CANCELLED", txId, status: "CANCELLED" };
@@ -222,6 +238,9 @@ export async function pollConsensusStatus(
 
     try {
       const tx = await client.getTransaction({ hash: txId });
+      // Successful RPC call — reset error counter
+      consecutiveRpcErrors = 0;
+
       if (!tx) {
         if (onProgress) onProgress("WAITING", elapsed);
         await new Promise(r => setTimeout(r, pollInterval));
@@ -258,9 +277,37 @@ export async function pollConsensusStatus(
         console.log(`❌ Consensus failed: ${safeStatus} (${(elapsed / 1000).toFixed(0)}s)`);
         return { consensus: "DISAGREED", txId, status: safeStatus, statusName: safeStatus, resultName, data: tx };
       }
-    } catch {
+    } catch (pollErr: unknown) {
       if (signal?.aborted) return { consensus: "CANCELLED", txId, status: "CANCELLED" };
-      // Transient poll error — retry silently
+
+      if (isRetryableError(pollErr)) {
+        consecutiveRpcErrors++;
+        const errMsg = pollErr instanceof Error ? pollErr.message : String(pollErr);
+        console.warn(
+          `⚠️ RPC polling error (${consecutiveRpcErrors}/${maxConsecutiveRpcErrors}) ` +
+          `txId=${txId} lastStatus=${lastStatus || "PENDING"} err="${errMsg}"`
+        );
+
+        if (consecutiveRpcErrors >= maxConsecutiveRpcErrors) {
+          console.error(`🛑 RPC polling failed after ${maxConsecutiveRpcErrors} consecutive errors`);
+          if (onProgress) onProgress("RPC_FAILED", elapsed);
+          return {
+            consensus: "ERROR",
+            txId,
+            status: "RPC_FAILED",
+            statusName: lastStatus || "RPC_FAILED",
+            resultName: "RPC_FAILED",
+          };
+        }
+
+        // Notify UI about retry state
+        if (onProgress) onProgress("RPC_RETRYING", elapsed);
+        await new Promise(r => setTimeout(r, rpcRetryBackoff));
+        continue;
+      }
+
+      // Non-retryable error — log but keep trying (legacy behavior)
+      console.warn(`⚠️ Non-retryable poll error, continuing: ${pollErr instanceof Error ? pollErr.message : String(pollErr)}`);
     }
     await new Promise(r => setTimeout(r, pollInterval));
   }

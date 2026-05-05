@@ -137,6 +137,8 @@ export default function Home() {
       return "Your wallet doesn't have enough funds to pay for this transaction.";
     if (/timeout|timed out/i.test(raw))
       return "The AI analysis is taking longer than expected. Validators may need 3–15 minutes to reach consensus — please try again.";
+    if (/rpc.*fail|internal error|eth_call/i.test(raw))
+      return "Bradbury RPC temporarily failed while polling consensus. The transaction may still complete on-chain. Try again or check the tx hash.";
     if (/no wallet|install.*metamask|install.*rabby/i.test(raw))
       return "No wallet detected. Please install Rabby or MetaMask and refresh the page.";
     return raw;

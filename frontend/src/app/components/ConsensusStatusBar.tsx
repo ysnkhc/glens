@@ -20,6 +20,8 @@ const STATUS_LABEL: Record<string, string> = {
   LEADER_TIMEOUT:"Lead validator timed out",
   CANCELED:      "Transaction cancelled",
   UNKNOWN_STATUS: "Waiting for status update…",
+  RPC_RETRYING:  "Network retrying… RPC temporarily unavailable",
+  RPC_FAILED:    "Bradbury RPC failed. Tx may still complete on-chain.",
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -34,16 +36,18 @@ const STATUS_COLOR: Record<string, string> = {
   LEADER_TIMEOUT:"#f97316",
   CANCELED:      "var(--text-muted)",
   UNKNOWN_STATUS: "var(--color-primary)",
+  RPC_RETRYING:  "#fbbf24",
+  RPC_FAILED:    "#ef4444",
 };
 
-const TERMINAL = ["FINALIZED", "ACCEPTED", "UNDETERMINED", "LEADER_TIMEOUT", "CANCELED"];
+const TERMINAL = ["FINALIZED", "ACCEPTED", "UNDETERMINED", "LEADER_TIMEOUT", "CANCELED", "RPC_FAILED"];
 
 export default function ConsensusStatusBar({ status, elapsed, onCancel }: ConsensusStatusBarProps) {
   const seconds = Math.floor(elapsed / 1000);
   const label = STATUS_LABEL[status] ?? "Processing…";
   const isTerminal = TERMINAL.includes(status);
   const isSuccess = status === "FINALIZED" || status === "ACCEPTED";
-  const isFailed = status === "UNDETERMINED" || status === "LEADER_TIMEOUT";
+  const isFailed = status === "UNDETERMINED" || status === "LEADER_TIMEOUT" || status === "RPC_FAILED";
   const statusColor = STATUS_COLOR[status] || "var(--color-primary)";
 
   return (
@@ -105,7 +109,7 @@ export default function ConsensusStatusBar({ status, elapsed, onCancel }: Consen
           <span className="font-mono" style={{ color: "var(--text-secondary)" }}>{seconds}s</span>
           <span> elapsed</span>
           {!isTerminal && seconds > 10 && (
-            <span style={{ color: "var(--text-faint)" }}> · Studio validators usually finish in ~35s</span>
+            <span style={{ color: "var(--text-faint)" }}> · Bradbury validators may take 1–5 min</span>
           )}
         </p>
       </div>
