@@ -26,6 +26,22 @@ export const CONTRACT_ADDRESS: Record<NetworkType, string> = {
   studio:   "0xA3DA12a7Bf0f9161c0Bb1E6Ba1FBa4C548178f2C",
 };
 
+export const CONTRACT_ADDRESS_V2 = CONTRACT_ADDRESS;
+
+export const CERTIFIED_REPORT_CONTRACT_ADDRESS: Record<NetworkType, string> = {
+  bradbury: "",
+  studio: "",
+};
+
+export function getCertifiedReportContractAddress(network: NetworkType): string {
+  return CERTIFIED_REPORT_CONTRACT_ADDRESS[network];
+}
+
+export function isCertifiedReportDeployed(network: NetworkType): boolean {
+  const addr = getCertifiedReportContractAddress(network);
+  return /^0x[a-fA-F0-9]{40}$/.test(addr);
+}
+
 /**
  * GenLayer RPC endpoints.
  */

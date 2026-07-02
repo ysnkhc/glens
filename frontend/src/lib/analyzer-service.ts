@@ -7,7 +7,16 @@
  * - Client-side fallback only used when no wallet is connected
  */
 
-import { CONTRACT_ADDRESS, createWriteClient, getLastEvmTxHash, pollForReceipt, extractGenLayerTxId, pollConsensusStatus } from "./genlayer";
+import {
+  CONTRACT_ADDRESS,
+  createWriteClient,
+  getCertifiedReportContractAddress,
+  getLastEvmTxHash,
+  isCertifiedReportDeployed,
+  pollForReceipt,
+  extractGenLayerTxId,
+  pollConsensusStatus,
+} from "./genlayer";
 import type { NetworkType } from "./genlayer";
 import { parseContract } from "./parser";
 import { runRules } from "./rules-engine";
@@ -23,6 +32,8 @@ import {
   validateAnalysisOutput,
   validateFixedCode,
   getReadMethod,
+  validateArgs,
+  validateCertifiedReportOutput,
 } from "./contract-interface";
 
 // ─── Fix 1: Global Nonce Lock ──────────────────────────────────
@@ -159,6 +170,24 @@ export interface ExplainResult {
   execution: ExecutionMeta;
 }
 
+export interface CertifiedAuditReport {
+  reportId: string;
+  title: string;
+  owner: string;
+  rawReport: string;
+  audit: AIAnalysis & {
+    risk_level?: "LOW" | "MEDIUM" | "HIGH";
+    issues?: unknown[];
+    warnings?: unknown[];
+  };
+  network: NetworkType;
+  contractAddress: string;
+  genLayerTxId: string;
+  status: string;
+  resultName?: string;
+  execution: ExecutionMeta;
+}
+
 // ─── Helpers ───────────────────────────────────────────────────
 
 /**
@@ -214,6 +243,18 @@ function isContractReady(walletAddress?: string | null, network: NetworkType = "
     return false;
   }
   return !!walletAddress;
+}
+
+export function isCertifiedReportReady(walletAddress?: string | null, network: NetworkType = "studio"): boolean {
+  return !!walletAddress && isCertifiedReportDeployed(network);
+}
+
+function normalizeReportId(raw: unknown): bigint {
+  if (typeof raw === "bigint") return raw;
+  if (typeof raw === "number") return BigInt(raw);
+  const text = String(raw).trim();
+  if (!text) return 0n;
+  return BigInt(text);
 }
 
 // ─── Prompt Utilities (shared module) ──────────────────────────
@@ -681,6 +722,153 @@ export async function explainContract(code: string, walletAddress?: string | nul
 // ─── Base64 Decoder ─────────────────────────────────────────────
 // GenLayer encodes validator results as base64 strings.
 // The raw bytes may have leading control/length bytes that need stripping.
+export async function createCertifiedAuditReport(
+  projectName: string,
+  code: string,
+  walletAddress: string,
+  network: NetworkType,
+  onStatusChange?: (status: string, elapsed: number) => void,
+  signal?: AbortSignal,
+): Promise<CertifiedAuditReport> {
+  const contractAddress = getCertifiedReportContractAddress(network);
+  if (!isCertifiedReportReady(walletAddress, network)) {
+    throw new Error(`Certified audit reports are not deployed for ${network}. Configure a v3 contract address after deployment.`);
+  }
+
+  const safeTitle = projectName.trim().replace(/\s+/g, " ");
+  const safeCode = code.trim();
+  if (!safeTitle) throw new Error("Project name is required.");
+  if (safeTitle.length > 80) throw new Error("Project name must be 80 characters or less.");
+  if (!safeCode) throw new Error("Source code is required.");
+  if (safeCode.length > 4000) throw new Error("Source code must be 4000 characters or less for certified reports.");
+
+  validateArgs("create_audit_report", [safeTitle, safeCode]);
+  logGL("REPORT -> TX START", { method: "create_audit_report", network, payloadLength: safeCode.length });
+
+  const client = await createWriteClient(walletAddress, network);
+  const timer = createTxTimer("create_audit_report");
+  let genLayerTxId: string | undefined;
+
+  try {
+    try {
+      const txHash = await sendSerialTransaction(() =>
+        client.writeContract({
+          address: contractAddress as `0x${string}`,
+          functionName: "create_audit_report",
+          args: [safeTitle, safeCode],
+          value: 0n,
+        })
+      );
+      genLayerTxId = String(txHash);
+    } catch (writeErr) {
+      if (isUserRejection(writeErr)) {
+        throw new Error("Transaction cancelled. Please approve the wallet popup to continue.");
+      }
+      const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+      const evmHash = getLastEvmTxHash();
+      if (!evmHash) {
+        throw new Error(`writeContract failed before submission: ${writeMsg}`);
+      }
+
+      try {
+        const receipt = await pollForReceipt(evmHash, 30000, network);
+        genLayerTxId = extractGenLayerTxId(receipt) || undefined;
+        if (!genLayerTxId) {
+          throw new Error(`SDK bypass failed: no txId in receipt logs. SDK error: ${writeMsg}`);
+        }
+      } catch {
+        throw new Error(`writeContract failed and recovery failed: ${writeMsg}`);
+      }
+    }
+
+    if (!genLayerTxId || genLayerTxId === "" || genLayerTxId === "0x") {
+      throw new Error(`No valid GenLayer txId: "${genLayerTxId}"`);
+    }
+
+    logGL("REPORT -> TX SENT", { genLayerTxId, contractAddress, network });
+    const consensusResult = await pollConsensusStatus(
+      genLayerTxId,
+      client,
+      onStatusChange,
+      signal,
+      network,
+    );
+
+    if (consensusResult.consensus !== "AGREED") {
+      throw new Error(`Certified report did not reach consensus (${consensusResult.consensus}).`);
+    }
+
+    const reportIdRaw = await client.readContract({
+      address: contractAddress as `0x${string}`,
+      functionName: "get_last_report_id",
+      args: [walletAddress],
+    });
+    const reportId = normalizeReportId(reportIdRaw);
+    if (reportId === 0n) {
+      throw new Error("Certified report finalized, but no report ID was found for this wallet.");
+    }
+
+    const [rawReport, title, owner] = await Promise.all([
+      client.readContract({
+        address: contractAddress as `0x${string}`,
+        functionName: "get_report",
+        args: [reportId],
+      }),
+      client.readContract({
+        address: contractAddress as `0x${string}`,
+        functionName: "get_report_title",
+        args: [reportId],
+      }),
+      client.readContract({
+        address: contractAddress as `0x${string}`,
+        functionName: "get_report_owner",
+        args: [reportId],
+      }),
+    ]);
+
+    const rawReportText = String(rawReport);
+    const reportTitle = String(title);
+    const reportOwner = String(owner);
+    if (reportTitle !== safeTitle) {
+      throw new Error("Certified report lookup returned a different project title than the submitted report.");
+    }
+    if (reportOwner.toLowerCase() !== walletAddress.toLowerCase()) {
+      throw new Error("Certified report lookup returned a different owner than the connected wallet.");
+    }
+
+    const parsed = safeParseStrict(rawReportText, "certified_audit_report") as AIAnalysis & {
+      risk_level?: "LOW" | "MEDIUM" | "HIGH";
+      issues?: unknown[];
+      warnings?: unknown[];
+    };
+    if (!validateCertifiedReportOutput(parsed)) {
+      throw new Error("Certified report did not match the expected v3 schema.");
+    }
+
+    timer.stop();
+    showRawResult(rawReportText, "CERTIFIED_REPORT");
+    return {
+      reportId: reportId.toString(),
+      title: reportTitle,
+      owner: reportOwner,
+      rawReport: rawReportText,
+      audit: parsed,
+      network,
+      contractAddress,
+      genLayerTxId,
+      status: consensusResult.statusName || consensusResult.status,
+      resultName: consensusResult.resultName,
+      execution: { ...computeTrust("ONCHAIN_CONFIRMED"), txHash: genLayerTxId },
+    };
+  } catch (err) {
+    timer.stop();
+    if (isUserRejection(err)) {
+      throw new Error("Transaction cancelled. Please approve the wallet popup to continue.");
+    }
+    throw err;
+  }
+}
+
 function decodeBase64Safe(b64: string): string {
   try {
     const raw = atob(b64);
