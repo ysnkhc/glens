@@ -29,7 +29,7 @@ export const CONTRACT_ADDRESS: Record<NetworkType, string> = {
 export const CONTRACT_ADDRESS_V2 = CONTRACT_ADDRESS;
 
 export const CERTIFIED_REPORT_CONTRACT_ADDRESS: Record<NetworkType, string> = {
-  bradbury: "",
+  bradbury: "0xCE3d730138d66c1f87bcCa8095F6e96373cc0233",
   studio: "",
 };
 

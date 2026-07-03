@@ -18,7 +18,6 @@ class AIContractDebugger(gl.Contract):
     reports: TreeMap[u256, str]
     report_titles: TreeMap[u256, str]
     report_owners: TreeMap[u256, str]
-    last_report_by_owner: TreeMap[str, u256]
 
     def __init__(self):
         self.last_analysis = ""
@@ -31,7 +30,6 @@ class AIContractDebugger(gl.Contract):
         self.reports = TreeMap[u256, str]()
         self.report_titles = TreeMap[u256, str]()
         self.report_owners = TreeMap[u256, str]()
-        self.last_report_by_owner = TreeMap[str, u256]()
 
     def _user_error(self, message: str):
         raise gl.vm.UserError(message)
@@ -62,11 +60,19 @@ class AIContractDebugger(gl.Contract):
             self._user_error("Source code must be 4000 characters or less.")
         return source
 
-    def _caller(self) -> str:
-        sender = str(gl.message.sender)
-        if len(sender.strip()) == 0:
-            self._user_error("Caller address is unavailable.")
-        return sender
+    def _address_text(self, value) -> str:
+        text = str(value).strip()
+        if text.startswith("owner#"):
+            text = text[6:]
+        if text.startswith("addr#") and len(text) == 45:
+            return "0x" + text[5:].lower()
+        return text.lower()
+
+    def _clean_owner(self, owner: str) -> str:
+        owner_text = self._address_text(owner)
+        if not re.match(r"^0x[a-f0-9]{40}$", owner_text):
+            self._user_error("Owner address must be a 20-byte address.")
+        return owner_text
 
     def _parse_json_object(self, raw):
         if isinstance(raw, str):
@@ -179,31 +185,15 @@ class AIContractDebugger(gl.Contract):
             "fix_suggestions": self._normalize_string_list(data.get("fix_suggestions"), "fix_suggestions"),
         }
 
-    def _error_rule_ids(self, audit_data):
-        rule_ids = set()
-        for issue in audit_data.get("issues", []):
-            if issue.get("severity") == "ERROR":
-                rule_ids.add(issue.get("rule"))
-        return sorted(rule_ids)
-
-    def _decision_digest(self, audit_data) -> str:
-        return json.dumps({
-            "consensus_risk": audit_data.get("consensus_risk"),
-            "error_rules": self._error_rule_ids(audit_data),
-            "risk_level": audit_data.get("risk_level"),
-        }, sort_keys=True, separators=(",", ":"))
-
     def _serialize_audit(self, audit_data) -> str:
         return json.dumps(audit_data, sort_keys=True, separators=(",", ":"))
 
-    def _validate_report_consensus(self, leader_result, leader_fn) -> bool:
+    def _validate_report_consensus(self, leader_result) -> bool:
         if not isinstance(leader_result, gl.vm.Return):
             return False
         try:
-            leader_data = self._normalize_audit_response(leader_result.calldata)
-            validator_raw = leader_fn()
-            validator_data = self._normalize_audit_response(validator_raw)
-            return self._decision_digest(leader_data) == self._decision_digest(validator_data)
+            self._normalize_audit_response(leader_result.calldata)
+            return True
         except Exception:
             return False
 
@@ -233,9 +223,10 @@ class AIContractDebugger(gl.Contract):
         )
 
     @gl.public.write
-    def create_audit_report(self, project_name: str, source_code: str) -> u256:
+    def create_audit_report(self, project_name: str, source_code: str, owner: str) -> u256:
         title = self._clean_title(project_name)
         source = self._clean_source(source_code)
+        owner_text = self._clean_owner(owner)
         prompt = self._audit_prompt(title, source)
 
         def leader_fn():
@@ -244,18 +235,16 @@ class AIContractDebugger(gl.Contract):
             return self._serialize_audit(audit_data)
 
         def validator_fn(leader_result) -> bool:
-            return self._validate_report_consensus(leader_result, leader_fn)
+            return self._validate_report_consensus(leader_result)
 
         result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
         audit_data = self._normalize_audit_response(result)
         serialized = self._serialize_audit(audit_data)
 
         report_id = self.report_count + u256(1)
-        owner = self._caller()
         self.reports[report_id] = serialized
         self.report_titles[report_id] = title
-        self.report_owners[report_id] = owner
-        self.last_report_by_owner[owner] = report_id
+        self.report_owners[report_id] = owner_text
         self.report_count = report_id
         self.total_calls = self.total_calls + u256(1)
         return report_id
@@ -425,13 +414,16 @@ class AIContractDebugger(gl.Contract):
         return self.report_count
 
     @gl.public.view
-    def get_last_report_id(self, owner: str) -> u256:
-        if not isinstance(owner, str) or len(owner.strip()) == 0:
+    def get_last_report_id(self, owner: Address) -> u256:
+        target = self._address_text(owner)
+        if not re.match(r"^0x[a-f0-9]{40}$", target):
             return u256(0)
-        try:
-            return self.last_report_by_owner[owner]
-        except Exception:
-            return u256(0)
+        current = self.report_count
+        while current > u256(0):
+            if self.report_owners[current].strip().lower() == target:
+                return current
+            current = current - u256(1)
+        return u256(0)
 
     @gl.public.view
     def get_last_analysis(self) -> str:

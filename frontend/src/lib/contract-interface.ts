@@ -22,7 +22,7 @@ import { logGL } from "./genlayer-debug";
 
 export interface ContractMethodSpec {
   args: string[];
-  argTypes?: ("string" | "u256")[];
+  argTypes?: ("string" | "u256" | "address")[];
   argMaxPayloads?: number[];
   maxPayload: number;
   readMethod: string;
@@ -66,8 +66,9 @@ export const CONTRACT_METHODS: Record<string, ContractMethodSpec> = {
 
 export const CERTIFIED_REPORT_METHODS: Record<string, ContractMethodSpec> = {
   create_audit_report: {
-    args: ["project_name", "source_code"],
-    argMaxPayloads: [80, 4000],
+    args: ["project_name", "source_code", "owner"],
+    argTypes: ["string", "string", "string"],
+    argMaxPayloads: [80, 4000, 48],
     maxPayload: 4000,
     readMethod: "get_last_report_id",
     returns: "id",
@@ -101,6 +102,7 @@ export const CERTIFIED_REPORT_METHODS: Record<string, ContractMethodSpec> = {
   },
   get_last_report_id: {
     args: ["owner"],
+    argTypes: ["address"],
     maxPayload: 42,
     readMethod: "get_last_report_id",
     returns: "id",
@@ -140,6 +142,13 @@ export function validateArgs(method: string, args: unknown[]): void {
         throw new Error(
           `âŒ Arg[${i}] (${spec.args[i]}) for ${method} must be a u256-compatible value`
         );
+      }
+      continue;
+    }
+    if (expectedType === "address") {
+      const validAddress = typeof arg === "string" && /^0x[a-fA-F0-9]{40}$/.test(arg);
+      if (!validAddress) {
+        throw new Error(`Arg[${i}] (${spec.args[i]}) for ${method} must be an address`);
       }
       continue;
     }

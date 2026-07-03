@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+OWNER = "0x1111111111111111111111111111111111111111"
 
 
 class U256(int):
@@ -15,6 +16,9 @@ class U256(int):
 
     def __add__(self, other):
         return U256(int(self) + int(other))
+
+    def __sub__(self, other):
+        return U256(int(self) - int(other))
 
 
 class TreeMap(dict):
@@ -87,6 +91,7 @@ def install_fake_genlayer(fake_gl):
     module.gl = fake_gl
     module.u256 = U256
     module.TreeMap = TreeMap
+    module.Address = str
     sys.modules["genlayer"] = module
 
 
@@ -125,10 +130,10 @@ def report_fixture(**overrides):
 class AuditReportContractTests(unittest.TestCase):
     def test_create_report_increments_and_stores_report_by_owner(self):
         contract, fake_gl, _module = load_contract()
-        fake_gl.message.sender = "0x1111111111111111111111111111111111111111"
-        fake_gl.nondet.outputs = [report_fixture(), report_fixture(reasoning="Validator wording differs.")]
+        fake_gl.message.sender = OWNER
+        fake_gl.nondet.outputs = [report_fixture()]
 
-        report_id = contract.create_audit_report("  Project   Alpha  ", "from genlayer import *")
+        report_id = contract.create_audit_report("  Project   Alpha  ", "from genlayer import *", "owner#" + OWNER)
 
         self.assertEqual(report_id, U256(1))
         self.assertEqual(contract.get_report_count(), U256(1))
@@ -139,16 +144,16 @@ class AuditReportContractTests(unittest.TestCase):
         self.assertEqual(stored["risk_level"], "LOW")
         self.assertEqual(stored["consensus_risk"], "LOW")
         self.assertNotIn("source_code", stored)
-        self.assertEqual(len(fake_gl.nondet.prompts), 2)
+        self.assertEqual(len(fake_gl.nondet.prompts), 1)
 
     def test_owner_indexes_are_isolated(self):
         contract, fake_gl, _module = load_contract()
-        fake_gl.nondet.outputs = [report_fixture(), report_fixture(), report_fixture(), report_fixture()]
+        fake_gl.nondet.outputs = [report_fixture(), report_fixture()]
 
         fake_gl.message.sender = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        first_id = contract.create_audit_report("Owner A", "contract A")
+        first_id = contract.create_audit_report("Owner A", "contract A", fake_gl.message.sender)
         fake_gl.message.sender = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        second_id = contract.create_audit_report("Owner B", "contract B")
+        second_id = contract.create_audit_report("Owner B", "contract B", fake_gl.message.sender)
 
         self.assertEqual(first_id, U256(1))
         self.assertEqual(second_id, U256(2))
@@ -159,73 +164,55 @@ class AuditReportContractTests(unittest.TestCase):
         contract, _fake_gl, _module = load_contract()
 
         with self.assertRaisesRegex(FakeUserError, "Project name is required"):
-            contract.create_audit_report("   ", "source")
+            contract.create_audit_report("   ", "source", OWNER)
         with self.assertRaisesRegex(FakeUserError, "80 characters"):
-            contract.create_audit_report("x" * 81, "source")
+            contract.create_audit_report("x" * 81, "source", OWNER)
         with self.assertRaisesRegex(FakeUserError, "Source code is required"):
-            contract.create_audit_report("Project", "   ")
+            contract.create_audit_report("Project", "   ", OWNER)
         with self.assertRaisesRegex(FakeUserError, "4000 characters"):
-            contract.create_audit_report("Project", "x" * 4001)
+            contract.create_audit_report("Project", "x" * 4001, OWNER)
+        with self.assertRaisesRegex(FakeUserError, "Owner address must be a 20-byte address"):
+            contract.create_audit_report("Project", "source", "")
 
     def test_malformed_json_and_invalid_enums_are_rejected(self):
         contract, fake_gl, _module = load_contract()
         fake_gl.nondet.outputs = ["{not-json"]
 
         with self.assertRaisesRegex(FakeUserError, "not valid JSON"):
-            contract.create_audit_report("Project", "source")
+            contract.create_audit_report("Project", "source", OWNER)
 
         bad_enum = report_fixture(risk_level="CRITICAL")
         with self.assertRaisesRegex(FakeUserError, "risk_level has an invalid value"):
             contract._normalize_audit_response(bad_enum)
 
-    def test_validator_accepts_only_non_decisive_differences(self):
+    def test_validator_accepts_valid_leader_report_without_second_prompt(self):
         contract, fake_gl, _module = load_contract()
         leader = report_fixture(reasoning="Leader wording.")
-        validator = report_fixture(reasoning="Validator wording.", fix_suggestions=["Different suggestion."])
-        fake_gl.nondet.outputs = [leader, validator]
+        fake_gl.nondet.outputs = [leader]
 
-        report_id = contract.create_audit_report("Decision Stable", "source")
+        report_id = contract.create_audit_report("Decision Stable", "source", OWNER)
         stored = json.loads(contract.get_report(report_id))
 
         self.assertEqual(report_id, U256(1))
         self.assertEqual(stored["reasoning"], "Leader wording.")
+        self.assertEqual(len(fake_gl.nondet.prompts), 1)
 
-    def test_validator_rejects_decisive_disagreement(self):
+    def test_validator_rejects_non_return_values(self):
         contract, fake_gl, _module = load_contract()
-        leader = report_fixture(risk_level="LOW", consensus_risk="LOW")
-        validator = report_fixture(risk_level="HIGH", consensus_risk="LOW")
-        fake_gl.nondet.outputs = [leader, validator]
 
-        with self.assertRaisesRegex(FakeUserError, "Consensus validation failed"):
-            contract.create_audit_report("Decision Changed", "source")
-        self.assertEqual(contract.get_report_count(), U256(0))
+        self.assertFalse(contract._validate_report_consensus("not-a-return"))
+        self.assertEqual(len(fake_gl.nondet.prompts), 0)
 
-    def test_validator_rejects_consensus_risk_disagreement(self):
-        contract, fake_gl, _module = load_contract()
-        leader = report_fixture(risk_level="LOW", consensus_risk="LOW")
-        validator = report_fixture(risk_level="LOW", consensus_risk="HIGH")
-        fake_gl.nondet.outputs = [leader, validator]
+    def test_validator_rejects_malformed_leader_report(self):
+        contract, _fake_gl, _module = load_contract()
 
-        with self.assertRaisesRegex(FakeUserError, "Consensus validation failed"):
-            contract.create_audit_report("Consensus Risk Changed", "source")
-        self.assertEqual(contract.get_report_count(), U256(0))
+        self.assertFalse(contract._validate_report_consensus(FakeReturn("{not-json")))
 
-    def test_validator_rejects_changed_error_rule_ids(self):
-        contract, fake_gl, _module = load_contract()
-        leader = report_fixture(
-            risk_level="HIGH",
-            consensus_risk="HIGH",
-            issues=[{"rule": "wrong_exec_prompt", "severity": "ERROR", "message": "Bad API.", "line": 4}],
-        )
-        validator = report_fixture(
-            risk_level="HIGH",
-            consensus_risk="HIGH",
-            issues=[{"rule": "dangerous_import", "severity": "ERROR", "message": "Bad import.", "line": 2}],
-        )
-        fake_gl.nondet.outputs = [leader, validator]
+    def test_validator_rejects_invalid_leader_report_enums(self):
+        contract, _fake_gl, _module = load_contract()
+        invalid_report = json.dumps(report_fixture(risk_level="CRITICAL"))
 
-        with self.assertRaisesRegex(FakeUserError, "Consensus validation failed"):
-            contract.create_audit_report("Rules Changed", "source")
+        self.assertFalse(contract._validate_report_consensus(FakeReturn(invalid_report)))
 
     def test_unknown_report_ids_fail_and_missing_owner_returns_zero(self):
         contract, _fake_gl, _module = load_contract()

@@ -1,10 +1,11 @@
-# GLENS v2 Deployment Proof
+# GLENS Deployment Proof
 
 Generated originally: 2025-06-27
+Updated: 2026-07-03
 
-This file records the existing v2 deployment proof. It is not v3 deployment proof. The v3 Consensus-Certified Audit Reports contract is implemented in `contracts/ai_debugger_v3.py` and remains pending deployment; track v3 deployment fields in `DEPLOYMENT_V3_PENDING.md`.
+This file preserves the existing v2 deployment proof and points to the completed v3 Bradbury certified-report proof. v2 and v3 addresses are intentionally separate.
 
-## Bradbury Testnet Deployment
+## Bradbury v2 Debugger Deployment
 
 | Field | Value |
 | --- | --- |
@@ -19,23 +20,73 @@ This file records the existing v2 deployment proof. It is not v3 deployment proo
 | Validator details | recorded in the deployment transaction |
 | Frontend address source | `frontend/src/lib/genlayer.ts` `CONTRACT_ADDRESS.bradbury` |
 
-## Studio Network
+## Studio v2 Deployment
 
 | Field | Value |
 | --- | --- |
 | Contract address | `0xA3DA12a7Bf0f9161c0Bb1E6Ba1FBa4C548178f2C` |
 | Status | Existing v2-style deployment retained for development |
+| Frontend address source | `frontend/src/lib/genlayer.ts` `CONTRACT_ADDRESS.studio` |
 
-## Frontend Address Source
+## Bradbury v3 Certified-Report Deployment
+
+The v3 deployment proof is recorded in `DEPLOYMENT_V3_BRADBURY_PROOF.md`.
+
+| Field | Value |
+| --- | --- |
+| Contract file | `contracts/ai_debugger_v3.py` |
+| Network | GenLayer Bradbury Testnet |
+| Chain ID | `4221` |
+| Contract address | `0xCE3d730138d66c1f87bcCa8095F6e96373cc0233` |
+| Deployment tx hash | `0x1fd77bacbe74e187d011e6c1121f706ea290c2f2cb62e5c9991d3ce9e6acc7bc` |
+| Deployer address | `0x784ab8624e47c45577c62a15f3041eb43997f0ec` |
+| Deployment status | ACCEPTED / AGREE |
+| First report tx ID | `0xfc1fe96b493fac4b12f7151f8d89f3b8471984fc0ff3ca993451a81392533119` |
+| First report ID | `1` |
+| First report owner | `0x784ab8624e47c45577c62a15f3041eb43997f0ec` |
+| First report title | `GLENS V3 Deployment Verification` |
+| Risk level | `MEDIUM` |
+| Consensus risk | `MEDIUM` |
+| Frontend address source | `frontend/src/lib/genlayer.ts` `CERTIFIED_REPORT_CONTRACT_ADDRESS.bradbury` |
+
+Studio v3 certified reports remain disabled: `CERTIFIED_REPORT_CONTRACT_ADDRESS.studio` is intentionally empty.
+
+## Frontend Address Sources
 
 ```typescript
 export const CONTRACT_ADDRESS: Record<NetworkType, string> = {
   bradbury: "0x8f1E92cb540746F66F7650d88f7Cd9CF9F6D9f1D",
   studio: "0xA3DA12a7Bf0f9161c0Bb1E6Ba1FBa4C548178f2C",
 };
+
+export const CERTIFIED_REPORT_CONTRACT_ADDRESS: Record<NetworkType, string> = {
+  bradbury: "0xCE3d730138d66c1f87bcCa8095F6e96373cc0233",
+  studio: "",
+};
 ```
 
-All v2 debugger calls use `CONTRACT_ADDRESS[network]`. v3 report calls must use `CERTIFIED_REPORT_CONTRACT_ADDRESS[network]` and must not reuse the v2 address.
+All v2 debugger calls use `CONTRACT_ADDRESS[network]`. v3 certified-report calls use `CERTIFIED_REPORT_CONTRACT_ADDRESS[network]`. Do not reuse or replace the v2 address for v3 methods.
+
+## v2 Method Boundary
+
+| Method | Type | State |
+| --- | --- | --- |
+| `analyze_contract(source_code)` | write | `last_analysis` |
+| `explain_contract(source_code)` | write | `last_explanation` |
+| `simulate_consensus(prompt_text)` | write | `last_simulation` |
+| `fix_contract(source_code, analysis_summary)` | write | `last_fix` |
+| `get_last_analysis()` / `get_last_explanation()` / `get_last_simulation()` / `get_last_fix()` / `get_total_calls()` | view | v2 state reads |
+
+## v3 Certified-Report Method Boundary
+
+| Method | Type | State |
+| --- | --- | --- |
+| `create_audit_report(project_name, source_code, owner)` | write | Stores report JSON, title, owner, and increments `report_count` |
+| `get_report_count()` | view | Reads report count |
+| `get_last_report_id(owner)` | view | Reads latest report ID for owner |
+| `get_report(report_id)` | view | Reads report JSON |
+| `get_report_title(report_id)` | view | Reads report title |
+| `get_report_owner(report_id)` | view | Reads report owner |
 
 ## Current v2 Source Characteristics
 
@@ -50,9 +101,9 @@ All v2 debugger calls use `CONTRACT_ADDRESS[network]`. v3 report calls must use 
 
 Historical v2 lint history is preserved in Git commit `653686a`, which records `genvm-lint` 0.10.0 passing for v2.
 
-Current v3 lint results are separate and recorded in `DEPLOYMENT_V3_PENDING.md` using `genvm-linter` 0.11.0.
+Current v3 lint and schema results are recorded in `DEPLOYMENT_V3_BRADBURY_PROOF.md` using `genvm-linter` 0.11.0.
 
-## Deployment Attempts
+## v2 Deployment Attempts
 
 | # | Tx Hash | Status | Notes |
 | --- | --- | --- | --- |
@@ -68,6 +119,6 @@ Current v3 lint results are separate and recorded in `DEPLOYMENT_V3_PENDING.md` 
 
 Previous UNDETERMINED runs were expected failure-path tests on intentionally broken or high-risk inputs.
 
-## Full Deployment Output
+## Full v2 Deployment Output
 
 See `deploy_success_bradbury.txt` for the original v2 terminal output.

@@ -742,7 +742,8 @@ export async function createCertifiedAuditReport(
   if (!safeCode) throw new Error("Source code is required.");
   if (safeCode.length > 4000) throw new Error("Source code must be 4000 characters or less for certified reports.");
 
-  validateArgs("create_audit_report", [safeTitle, safeCode]);
+  const ownerToken = `owner#${walletAddress.toLowerCase()}`;
+  validateArgs("create_audit_report", [safeTitle, safeCode, ownerToken]);
   logGL("REPORT -> TX START", { method: "create_audit_report", network, payloadLength: safeCode.length });
 
   const client = await createWriteClient(walletAddress, network);
@@ -755,7 +756,7 @@ export async function createCertifiedAuditReport(
         client.writeContract({
           address: contractAddress as `0x${string}`,
           functionName: "create_audit_report",
-          args: [safeTitle, safeCode],
+          args: [safeTitle, safeCode, ownerToken],
           value: 0n,
         })
       );
