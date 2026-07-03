@@ -1,208 +1,91 @@
-# GLENS — GenLayer Intelligent Contract Analyzer
+# GLENS - GenLayer Intelligent Contract Analyzer
 
-> A fully on-chain DApp that analyzes, fixes, and consensus-tests GenLayer Intelligent Contracts. Paste your contract, connect your wallet — 5 real validators execute your AI prompts and vote on-chain.
+GLENS is a Next.js app for analyzing GenLayer Intelligent Contracts. The production debugger path remains the deployed v2 contract. v3 adds consensus-certified audit reports and is deployed separately on Bradbury.
 
-**Live:** [glens.vercel.app](https://glens.vercel.app)
+## Current Deployment State
 
----
+| Contract | File | Status | Address source |
+| --- | --- | --- | --- |
+| v2 debugger | `contracts/ai_debugger_v2.py` | Deployed on Bradbury and Studio-style development network | `frontend/src/lib/genlayer.ts` `CONTRACT_ADDRESS` |
+| v3 certified reports | `contracts/ai_debugger_v3.py` | Deployed on Bradbury; Studio v3 remains disabled | `frontend/src/lib/genlayer.ts` `CERTIFIED_REPORT_CONTRACT_ADDRESS` |
 
-## What It Does
+Do not send v3 certified-report methods to the v2 address. Bradbury certified-report creation uses the v3 address only; Studio certified reports remain disabled until a Studio v3 deployment is proven and configured.
 
-| Action | What happens |
-|--------|-------------|
-| **Analyze Contract** | 5 validators AI-audit your contract for prompt quality, determinism risks, and consensus safety. Result stored on-chain. |
-| **Fix & Re-analyze** | AI generates a corrected version with proper `gl.eq_principle` wrapping, type annotations, and decorator fixes. |
-| **Explain** | Validators produce a plain-English breakdown of what your contract does and how it handles AI calls. |
-| **Run Consensus Test** | A deterministic prompt is sent to 5 validators. If they agree → AGREED. If not → DISAGREED. A direct test of your contract's consensus-safety. |
+## Deployed Addresses
 
-Every action requires one wallet signature. Results are verified on-chain by GenLayer's Optimistic Democracy consensus.
+| Network | v2 debugger address | v3 certified-report address |
+| --- | --- | --- |
+| Bradbury | `0x8f1E92cb540746F66F7650d88f7Cd9CF9F6D9f1D` | `0xCE3d730138d66c1f87bcCa8095F6e96373cc0233` |
+| Studio | `0xA3DA12a7Bf0f9161c0Bb1E6Ba1FBa4C548178f2C` | Disabled / empty |
 
----
+## v2 Debugger Methods
 
-## Architecture
+| Method | Type | Behavior |
+| --- | --- | --- |
+| `analyze_contract(source_code)` | write | Audits up to 4000 chars and stores JSON in `last_analysis`. |
+| `explain_contract(source_code)` | write | Explains up to 4000 chars and stores plain text in `last_explanation`. |
+| `simulate_consensus(prompt_text)` | write | Runs the prompt through validators and stores the first normalized word in `last_simulation`. |
+| `fix_contract(source_code, analysis_summary)` | write | Returns JSON with a `fixes` array and stores it in `last_fix`. |
+| `get_last_analysis()` / `get_last_explanation()` / `get_last_simulation()` / `get_last_fix()` / `get_total_calls()` | view | Read v2 contract state. |
 
+## v3 Certified-Report Methods
+
+`contracts/ai_debugger_v3.py` preserves the debugger methods and adds persistent certified-report storage:
+
+| Method | Type | Behavior |
+| --- | --- | --- |
+| `create_audit_report(project_name, source_code, owner)` | write | Creates a normalized JSON report, stores title and owner, and increments `report_count`. Frontend/CLI passes owner as text such as `owner#0x...`. |
+| `get_report_count()` | view | Reads the number of stored reports. |
+| `get_last_report_id(owner)` | view | Reads the latest report ID for an owner address. |
+| `get_report(report_id)` | view | Reads the stored report JSON string. |
+| `get_report_title(report_id)` | view | Reads the stored project title. |
+| `get_report_owner(report_id)` | view | Reads the normalized report owner address. |
+
+The v3 report path uses `gl.vm.run_nondet_unsafe`; validators deterministically accept only leader output that normalizes to the strict report JSON schema.
+
+## Repository Architecture
+
+```text
+contracts/
+  ai_debugger_v2.py          deployed v2 debugger contract
+  ai_debugger_v3.py          deployed Bradbury v3 certified-report contract
+  tests/                     local Python unit tests with a fake GenLayer runtime
+frontend/
+  src/app/page.tsx           main client UI
+  src/app/components/        UI panels and controls
+  src/lib/genlayer.ts        network config, wallet client, consensus polling
+  src/lib/analyzer-service.ts contract write/read orchestration
+  src/lib/contract-interface.ts method specs and response validation
+  src/lib/*                  parser, rules, scoring, fixer, prediction helpers
 ```
-┌────────────────────────────────────────────────────────┐
-│  Browser (Next.js + TypeScript)                        │
-│                                                        │
-│  Monaco Editor ──► Parser ──► Rules Engine ──► Risk   │
-│                     (instant, client-side, no wallet)  │
-│                                                        │
-│  For AI actions: Rabby/MetaMask signs the transaction  │
-│  pollConsensusStatus() polls until FINALIZED/ACCEPTED  │
-└────────────────────────────────────────────────────────┘
-                          │
-              ┌───────────┴────────────┐
-              │                        │
-   ┌──────────┴──────────┐  ┌─────────┴──────────┐
-   │  Studio Network     │  │  Bradbury Testnet   │
-   │  Chain ID: 61999    │  │  Chain ID: 4221     │
-   │  Fast & stable      │  │  Real validators    │
-   │  (dev environment)  │  │  (production-like)  │
-   │                     │  │                     │
-   │  AIContractDebugger │  │  AIContractDebugger │
-   │  (on-chain Python)  │  │  (on-chain Python)  │
-   │  5 validators       │  │  5 validators       │
-   └─────────────────────┘  └─────────────────────┘
-```
 
-### Key Design Decisions
+## Commands
 
-- **No private keys** — The app uses the user's own Rabby/MetaMask wallet. Zero hardcoded secrets.
-- **Bradbury verified** — Deployed and consensus-tested on Bradbury testnet with real LLM validators.
-- **SDK bypass** — The GenLayer SDK's `waitForTransactionReceipt` is unreliable (enum mismatch). We use a custom `pollConsensusStatus()` that handles `FINALIZED`, `ACCEPTED`, and `UNDETERMINED` by name.
-- **Client-side first** — Structural analysis (parser, rules, risk) runs instantly in the browser. Only AI and consensus hit the chain.
-- **?debug=1** — Append `?debug=1` to the URL to reveal the full GenLayer Flow Inspector.
-
----
-
-## Networks & Contracts
-
-### Bradbury Testnet (primary — verified)
-
-| Field | Value |
-|-------|-------|
-| Chain ID | `4221` |
-| RPC | `https://rpc-bradbury.genlayer.com` |
-| Contract | `0x8f1E92cb540746F66F7650d88f7Cd9CF9F6D9f1D` |
-| Explorer | [explorer-bradbury.genlayer.com](https://explorer-bradbury.genlayer.com) |
-
-**Live proof transactions:**
-
-| Tx Hash | Status |
-|---------|--------|
-| `0xee830fece2206f508f5b19ba7f836944dc55685ce4c3a60ab6460362a78f7fcb` | ACCEPTED |
-| `0x2542ca8589c51e6222e228d0fabc3771829a07cabbdccfb08a0d7528ad5c4d1e` | ACCEPTED / AGREED (6 validators, 76s) |
-
-### Studio (hidden — not part of current resubmission)
-
-Studio (`0xA3DA12a7Bf0f9161c0Bb1E6Ba1FBa4C548178f2C`, chain 61999) is kept in the codebase for future development but is hidden from the public UI. It was not redeployed or tested with the current contract fixes.
-
-The app defaults to Bradbury and automatically switches your wallet to chain 4221.
-
----
-
-## Contract Methods
-
-| Method | Type | Description |
-|--------|------|-------------|
-| `analyze_contract(summary)` | write | AI audits for risks, returns JSON with scores |
-| `explain_contract(summary)` | write | AI explains contract logic in plain English |
-| `simulate_consensus(prompt)` | write | Tests if 5 validators agree on a deterministic output |
-| `fix_contract(summary)` | write | AI generates corrected contract version |
-| `get_last_analysis()` / `get_last_explanation()` / etc. | read | Reads the stored result after consensus |
-
-Each write triggers GenLayer consensus — validators independently execute the AI prompt and must agree via `gl.eq_principle`.
-
----
-
-## Quick Start
-
-### Prerequisites
-
-- Node.js 18+
-- Rabby or MetaMask browser wallet
-- GEN tokens on Bradbury testnet (for gas)
-
-### Run Locally
+From `frontend/`:
 
 ```bash
-git clone https://github.com/ysnkhc/glens.git
-cd glens/frontend
-npm install
 npm run dev
+npm run lint
+npm run build
+npx tsc --noEmit
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+From the repository root:
 
-### Connect & Use
-
-1. Click **Connect Wallet** — the app prompts your wallet to switch to the selected network
-2. Paste a GenLayer contract in the editor (or pick an example)
-3. Click **Analyze Contract** — or press **Ctrl+Enter**
-4. After analysis results appear, use **Fix & Re-analyze**, **Explain**, or **Run Consensus Test**
-
----
-
-## Project Structure
-
-```
-├── contracts/
-│   └── ai_debugger.py           # On-chain GenLayer Intelligent Contract (Python)
-└── frontend/
-    └── src/
-        ├── app/
-        │   ├── page.tsx                 # Main UI — editor, results, network state
-        │   └── components/
-        │       ├── Header.tsx           # Wallet + network selector
-        │       ├── ResultsPanel.tsx     # Results display (risk, issues, consensus)
-        │       ├── SimulationPanel.tsx  # Consensus test card
-        │       ├── ConsensusStatusBar.tsx # Live spinner with elapsed time
-        │       ├── CodeEditor.tsx       # Monaco Editor wrapper
-        │       └── ...
-        └── lib/
-            ├── analyzer-service.ts  # Core: analyze, explain, simulate, fix
-            ├── genlayer.ts          # Wallet, chain switching, pollConsensusStatus
-            ├── parser.ts            # AST-style contract parser
-            ├── rules-engine.ts      # Structural validation rules
-            ├── risk-scorer.ts       # LOW / MEDIUM / HIGH scoring
-            └── fixer-engine.ts      # Deterministic contract fixer
+```bash
+python -m unittest discover contracts/tests
+.venv/Scripts/genvm-lint.exe check contracts/ai_debugger_v3.py
+.venv/Scripts/genvm-lint.exe typecheck contracts/ai_debugger_v3.py
+.venv/Scripts/genvm-lint.exe schema contracts/ai_debugger_v3.py
 ```
 
----
+For release verification, create `.venv` and install only the official `genvm-linter` package there. Current verified linter: `genvm-lint` 0.11.0.
 
-## Tech Stack
+## Deployment Proofs
 
-| Layer | Technology |
-|-------|-----------|
-| **Frontend** | Next.js 16, React 19, TypeScript |
-| **Styling** | Vanilla CSS (glassmorphism design system) |
-| **Editor** | Monaco Editor (VS Code engine) |
-| **Blockchain** | GenLayer Bradbury Testnet |
-| **SDK** | `genlayer-js` |
-| **Wallet** | Rabby / MetaMask (EIP-1193) |
-| **Consensus** | 5 validators · `gl.eq_principle` · up to 3 rotation rounds |
-| **Hosting** | Vercel |
+| Proof | File |
+| --- | --- |
+| v2 deployment history | `DEPLOYMENT_PROOF.md` |
+| v3 Bradbury deployment and first certified-report proof | `DEPLOYMENT_V3_BRADBURY_PROOF.md` |
 
----
-
-## How Consensus Works
-
-```
-User clicks action
-      │
-      ▼
-Rabby popup (sign tx)
-      │
-      ▼
-GenLayer Router ──► 5 Validators (each runs LLM independently)
-      │
-      ▼
-Validators commit/reveal outputs via gl.eq_principle
-      │
-   ┌──┴──┐
-   │     │
-AGREED  DISAGREED
-(FINALIZED/  (UNDETERMINED)
- ACCEPTED)
-      │
-      ▼
-App reads result from contract state
-```
-
-Bradbury typically reaches consensus in **60–200 seconds**.
-
----
-
-## Security
-
-- **No private keys** are stored anywhere in this codebase
-- The app uses the browser wallet (EIP-1193) for all signing — the private key never leaves the user's wallet
-- All AI results are verified by 5 independent validators before being stored on-chain
-- Client-side analysis is clearly labeled and distinguished from on-chain results
-
----
-
-## License
-
-MIT
+The v3 proof records the deployment transaction, first report transaction, report ID, owner, title, risk level, consensus risk, and independent readback results.

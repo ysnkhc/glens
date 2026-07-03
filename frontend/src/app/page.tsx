@@ -10,6 +10,8 @@ import DebugPanel from "./components/DebugPanel";
 import { SAMPLE_CONTRACTS } from "./components/SampleContracts";
 import {
   connectWallet,
+  getCertifiedReportContractAddress,
+  isCertifiedReportDeployed,
   getConnectedAddress,
 } from "@/lib/genlayer";
 import type { NetworkType } from "@/lib/genlayer";
@@ -18,11 +20,13 @@ import {
   explainContract,
   simulateConsensus,
   fixContract,
+  createCertifiedAuditReport,
   computeTrust,
 } from "@/lib/analyzer-service";
 import { logGL } from "@/lib/genlayer-debug";
 import type {
   AnalysisResult,
+  CertifiedAuditReport,
   SimulationResult,
   FixResult,
 } from "@/lib/analyzer-service";
@@ -55,6 +59,12 @@ export default function Home() {
   const [fixToast, setFixToast] = useState<string | null>(null);
   const [fixResult, setFixResult] = useState<FixResult | null>(null);
   const [activePanel, setActivePanel] = useState<"editor" | "results">("editor");
+  const [projectName, setProjectName] = useState("GLENS Audit");
+  const [certifiedReport, setCertifiedReport] = useState<CertifiedAuditReport | null>(null);
+  const [certifiedReportError, setCertifiedReportError] = useState<string | null>(null);
+  const [isCreatingReport, setIsCreatingReport] = useState(false);
+  const [reportStatus, setReportStatus] = useState<string | null>(null);
+  const [reportElapsed, setReportElapsed] = useState(0);
 
 
   // Consensus polling state
@@ -128,7 +138,7 @@ export default function Home() {
   }, []);
 
   // ─── Human-readable error transformer ────────────────────────
-  function transformError(raw: string): string {
+  const transformError = useCallback((raw: string): string => {
     if (/chainId|chain_id|wrong.*chain|switch.*chain/i.test(raw))
       return "Please switch your wallet to the " + (network === "studio" ? "Studio" : "Bradbury") + " network and try again.";
     if (/user rejected|user denied|rejected the request/i.test(raw))
@@ -142,7 +152,7 @@ export default function Home() {
     if (/no wallet|install.*metamask|install.*rabby/i.test(raw))
       return "No wallet detected. Please install Rabby or MetaMask and refresh the page.";
     return raw;
-  }
+  }, [network]);
 
   // ─── Network Switch ──────────────────────────────────────────
 
@@ -153,6 +163,9 @@ export default function Home() {
     setExplanation(null);
     setFixResult(null);
     setFixToast(null);
+    setCertifiedReport(null);
+    setCertifiedReportError(null);
+    setReportStatus(null);
     setError(null);
     setConsensusStatus(null);
 
@@ -186,12 +199,15 @@ export default function Home() {
     setExplanation(null);
     setFixResult(null);
     setFixToast(null);
+    setCertifiedReport(null);
+    setCertifiedReportError(null);
+    setReportStatus(null);
     setError(null);
     logGL("ACTION → Wallet Disconnected", {});
   }, []);
 
   // ─── Single-TX enforcement ──────────────────────────────────
-  const isBusy = isLoading || isExplaining || isSimulating || isFixing;
+  const isBusy = isLoading || isExplaining || isSimulating || isFixing || isCreatingReport;
 
   // ─── Analyze (passes walletAddress for on-chain AI) ──────────
 
@@ -216,6 +232,9 @@ export default function Home() {
     setSimulationResult(null);
     setFixToast(null);
     setFixResult(null);
+    setCertifiedReport(null);
+    setCertifiedReportError(null);
+    setReportStatus(null);
     setActivePanel("results");
 
     try {
@@ -364,6 +383,63 @@ export default function Home() {
     }
   }, []);
 
+  const handleCreateCertifiedReport = useCallback(async () => {
+    if (isBusy) {
+      logGL("BLOCKED: Certified report", { reason: "Another action is in progress" });
+      return;
+    }
+    if (!walletAddress) {
+      setCertifiedReportError("Connect your wallet to create a certified report.");
+      return;
+    }
+    if (!projectName.trim()) {
+      setCertifiedReportError("Project name is required.");
+      return;
+    }
+    if (!code.trim()) {
+      setCertifiedReportError("Source code is required.");
+      return;
+    }
+    if (!isCertifiedReportDeployed(network)) {
+      setCertifiedReportError(`Certified audit reports are not deployed for ${network}.`);
+      return;
+    }
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setIsCreatingReport(true);
+    setCertifiedReport(null);
+    setCertifiedReportError(null);
+    setReportStatus("SUBMITTING");
+    setReportElapsed(0);
+    setActivePanel("results");
+
+    try {
+      const report = await createCertifiedAuditReport(
+        projectName,
+        code,
+        walletAddress,
+        network,
+        (status, elapsed) => {
+          setReportStatus(status);
+          setReportElapsed(elapsed);
+        },
+        controller.signal,
+      );
+      setCertifiedReport(report);
+      setReportStatus(null);
+      logGL("ACTION ✓ Certified report complete", { reportId: report.reportId, txId: report.genLayerTxId });
+    } catch (err: unknown) {
+      const raw = err instanceof Error ? err.message : "Certified report failed.";
+      setCertifiedReportError(transformError(raw));
+      setReportStatus(null);
+      logGL("ACTION ✕ Certified report failed", { error: raw });
+    } finally {
+      setIsCreatingReport(false);
+      abortRef.current = null;
+    }
+  }, [code, isBusy, network, projectName, transformError, walletAddress]);
+
   const handleFix = useCallback(async () => {
     if (isBusy) {
       logGL("BLOCKED: Fix", { reason: "Another action is in progress" });
@@ -489,6 +565,9 @@ export default function Home() {
     setExplanation(null);
     setSimulationResult(null);
     setFixToast(null);
+    setCertifiedReport(null);
+    setCertifiedReportError(null);
+    setReportStatus(null);
     setActivePanel("editor");
   }, []);
 
@@ -624,6 +703,8 @@ export default function Home() {
                 result={result}
                 isLoading={isLoading}
                 error={error}
+                code={code}
+                walletAddress={walletAddress}
                 onExplain={handleExplain}
                 explanation={explanation}
                 isExplaining={isExplaining}
@@ -637,6 +718,17 @@ export default function Home() {
                 consensusElapsed={consensusElapsed}
                 onCancelConsensus={handleCancelConsensus}
                 network={network}
+                prediction={prediction}
+                projectName={projectName}
+                onProjectNameChange={setProjectName}
+                onCreateCertifiedReport={handleCreateCertifiedReport}
+                certifiedReport={certifiedReport}
+                certifiedReportError={certifiedReportError}
+                isCreatingReport={isCreatingReport}
+                certifiedReportStatus={reportStatus}
+                certifiedReportElapsed={reportElapsed}
+                certifiedReportAddress={getCertifiedReportContractAddress(network)}
+                certifiedReportEnabled={isCertifiedReportDeployed(network)}
               />
             </div>
           </div>

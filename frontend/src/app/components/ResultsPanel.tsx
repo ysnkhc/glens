@@ -6,6 +6,7 @@ import ConsensusStatusBar from "./ConsensusStatusBar";
 import CopyButton from "./CopyButton";
 import type { ExecutionMeta } from "./TrustBadge";
 import type { ConsensusPrediction } from "@/lib/consensus-predictor";
+import type { CertifiedAuditReport } from "@/lib/analyzer-service";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -62,12 +63,23 @@ interface ResultsPanelProps {
   onFix?: () => void;
   isFixing?: boolean;
   code?: string;
+  walletAddress?: string | null;
   prediction?: ConsensusPrediction | null;
   fixResult?: FixResult | null;
   consensusStatus?: string | null;
   consensusElapsed?: number;
   onCancelConsensus?: () => void;
   network?: "studio" | "bradbury";
+  projectName?: string;
+  onProjectNameChange?: (value: string) => void;
+  onCreateCertifiedReport?: () => void;
+  certifiedReport?: CertifiedAuditReport | null;
+  certifiedReportError?: string | null;
+  isCreatingReport?: boolean;
+  certifiedReportStatus?: string | null;
+  certifiedReportElapsed?: number;
+  certifiedReportAddress?: string;
+  certifiedReportEnabled?: boolean;
 }
 
 // ─── Risk config ──────────────────────────────────────────────────
@@ -248,10 +260,17 @@ function SeverityDot({ type }: { type: "issue" | "warning" | "suggestion" }) {
 
 // ─── Main component ───────────────────────────────────────────────
 
+function formatHash(value?: string | null): string {
+  if (!value) return "Pending deployment";
+  if (value.length <= 16) return value;
+  return `${value.slice(0, 8)}...${value.slice(-6)}`;
+}
+
 export default function ResultsPanel({
   result,
   isLoading,
   error,
+  walletAddress,
   onExplain,
   explanation,
   isExplaining,
@@ -265,6 +284,16 @@ export default function ResultsPanel({
   consensusElapsed,
   onCancelConsensus,
   network = "bradbury",
+  projectName = "",
+  onProjectNameChange,
+  onCreateCertifiedReport,
+  certifiedReport,
+  certifiedReportError,
+  isCreatingReport,
+  certifiedReportStatus,
+  certifiedReportElapsed,
+  certifiedReportAddress,
+  certifiedReportEnabled,
 }: ResultsPanelProps) {
   const [showFixedCode, setShowFixedCode] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
@@ -497,6 +526,135 @@ export default function ResultsPanel({
       </div>
 
       {/* ── Issues list ───────────────────────────────────────────── */}
+      {onCreateCertifiedReport && (
+        <div
+          className="rounded-xl p-4 animate-fade-in-up space-y-3"
+          style={{ background: "var(--bg-depth-2)", border: "1px solid var(--border-subtle)" }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--color-primary)" }}>
+                <path d="M9 12l2 2 4-4" />
+                <path d="M21 12c-1 0-3-1-3-3s2-3 3-3c0-2-2-4-4-4-1 1-2 2-4 2s-3-1-4-2C7 2 5 4 5 6c1 0 3 1 3 3s-2 3-3 3c0 2 2 4 4 4 1-1 2-2 4-2s3 1 4 2c2 0 4-2 4-4z" />
+              </svg>
+              <span className="text-sm font-bold truncate" style={{ color: "var(--text-primary)" }}>Consensus-Certified Audit Report</span>
+            </div>
+            <span
+              className="text-[10px] font-bold px-2 py-1 rounded-full whitespace-nowrap"
+              style={{
+                color: certifiedReportEnabled ? "#4ade80" : "var(--text-muted)",
+                background: certifiedReportEnabled ? "rgba(74, 222, 128, 0.06)" : "var(--bg-depth-3)",
+                border: certifiedReportEnabled ? "1px solid rgba(74, 222, 128, 0.14)" : "1px solid var(--border-subtle)",
+              }}
+            >
+              {certifiedReportEnabled ? "V3 READY" : "V3 PENDING"}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
+            <input
+              value={projectName}
+              onChange={(e) => onProjectNameChange?.(e.target.value)}
+              maxLength={80}
+              className="w-full rounded-lg px-3 py-2 text-xs outline-none"
+              style={{
+                background: "var(--bg-depth-1)",
+                border: "1px solid var(--border-subtle)",
+                color: "var(--text-primary)",
+              }}
+              placeholder="Project name"
+            />
+            <button
+              onClick={onCreateCertifiedReport}
+              disabled={isCreatingReport || !walletAddress || !certifiedReportEnabled}
+              className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all duration-200 disabled:opacity-35 whitespace-nowrap"
+              style={{
+                background: "linear-gradient(135deg, rgba(45, 212, 191, 0.08), rgba(74, 222, 128, 0.06))",
+                border: "1px solid rgba(45, 212, 191, 0.15)",
+                color: "#2dd4bf",
+              }}
+              title={!walletAddress ? "Connect wallet to create a certified report" : !certifiedReportEnabled ? "Deploy and configure the v3 report contract first" : ""}
+            >
+              {isCreatingReport ? (
+                <><div className="w-3 h-3 border-2 border-teal-400/40 border-t-teal-400 rounded-full animate-spin" />Creating...</>
+              ) : (
+                "Create Certified Report"
+              )}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+            <div className="rounded-lg px-3 py-2" style={{ background: "var(--bg-depth-1)", border: "1px solid var(--border-subtle)" }}>
+              <div style={{ color: "var(--text-faint)" }}>Network</div>
+              <div className="font-mono truncate" style={{ color: "var(--text-secondary)" }}>{network}</div>
+            </div>
+            <div className="rounded-lg px-3 py-2" style={{ background: "var(--bg-depth-1)", border: "1px solid var(--border-subtle)" }}>
+              <div style={{ color: "var(--text-faint)" }}>V3 Contract</div>
+              <div className="font-mono truncate" style={{ color: "var(--text-secondary)" }}>{formatHash(certifiedReportAddress)}</div>
+            </div>
+          </div>
+
+          {certifiedReportStatus && isCreatingReport && onCancelConsensus && (
+            <ConsensusStatusBar
+              status={certifiedReportStatus}
+              elapsed={certifiedReportElapsed || 0}
+              onCancel={onCancelConsensus}
+            />
+          )}
+
+          {certifiedReportError && (
+            <div
+              className="rounded-lg px-3 py-2 text-xs"
+              style={{ color: "#fb923c", background: "rgba(249, 115, 22, 0.05)", border: "1px solid rgba(249, 115, 22, 0.12)" }}
+            >
+              {certifiedReportError}
+            </div>
+          )}
+
+          {certifiedReport && (
+            <div
+              className="rounded-lg p-3 space-y-3"
+              style={{ background: "rgba(74, 222, 128, 0.04)", border: "1px solid rgba(74, 222, 128, 0.12)" }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold" style={{ color: "#4ade80" }}>Consensus Certified</span>
+                <CopyButton text={certifiedReport.rawReport} label="Copy JSON" />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+                <div>
+                  <div style={{ color: "var(--text-faint)" }}>Report ID</div>
+                  <div className="font-mono" style={{ color: "var(--text-secondary)" }}>{certifiedReport.reportId}</div>
+                </div>
+                <div>
+                  <div style={{ color: "var(--text-faint)" }}>Status</div>
+                  <div className="font-mono" style={{ color: "var(--text-secondary)" }}>{certifiedReport.status}</div>
+                </div>
+                <div>
+                  <div style={{ color: "var(--text-faint)" }}>Title</div>
+                  <div className="truncate" style={{ color: "var(--text-secondary)" }}>{certifiedReport.title}</div>
+                </div>
+                <div>
+                  <div style={{ color: "var(--text-faint)" }}>Owner</div>
+                  <div className="font-mono truncate" style={{ color: "var(--text-secondary)" }}>{formatHash(certifiedReport.owner)}</div>
+                </div>
+                <div>
+                  <div style={{ color: "var(--text-faint)" }}>Risk</div>
+                  <div className="font-bold" style={{ color: "var(--text-secondary)" }}>{certifiedReport.audit.risk_level || "UNKNOWN"}</div>
+                </div>
+                <div>
+                  <div style={{ color: "var(--text-faint)" }}>Consensus Risk</div>
+                  <div className="font-bold" style={{ color: "var(--text-secondary)" }}>{certifiedReport.audit.consensus_risk || "UNKNOWN"}</div>
+                </div>
+                <div className="sm:col-span-2">
+                  <div style={{ color: "var(--text-faint)" }}>GenLayer Tx ID</div>
+                  <div className="font-mono break-all" style={{ color: "var(--text-secondary)" }}>{certifiedReport.genLayerTxId}</div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {(result.issues.length > 0 || result.warnings.length > 0 || result.suggestions.length > 0) && (
         <div
           className="rounded-xl overflow-hidden animate-fade-in-up"

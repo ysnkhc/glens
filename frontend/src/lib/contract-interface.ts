@@ -22,9 +22,11 @@ import { logGL } from "./genlayer-debug";
 
 export interface ContractMethodSpec {
   args: string[];
+  argTypes?: ("string" | "u256" | "address")[];
+  argMaxPayloads?: number[];
   maxPayload: number;
   readMethod: string;
-  returns: "json" | "text" | "word";
+  returns: "json" | "text" | "word" | "id" | "address";
 }
 
 /**
@@ -42,8 +44,8 @@ export const CONTRACT_METHODS: Record<string, ContractMethodSpec> = {
     returns: "json",
   },
   explain_contract: {
-    args: ["summary"],
-    maxPayload: 500,     // contract does summary[:500]
+    args: ["source_code"],
+    maxPayload: 4000,    // contract does source_code[:4000]
     readMethod: "get_last_explanation",
     returns: "text",
   },
@@ -51,14 +53,65 @@ export const CONTRACT_METHODS: Record<string, ContractMethodSpec> = {
     args: ["prompt_text"],
     maxPayload: 300,     // contract does prompt_text[:300]
     readMethod: "get_last_simulation",
-    returns: "word",     // returns "GOOD" or "BAD"
+    returns: "word",     // returns first normalized word from the prompt result
   },
   fix_contract: {
     args: ["source_code", "analysis_summary"],
+    argMaxPayloads: [4000, 1000],
     maxPayload: 4000,    // contract does source_code[:4000]
     readMethod: "get_last_fix",
     returns: "json",
   },
+};
+
+export const CERTIFIED_REPORT_METHODS: Record<string, ContractMethodSpec> = {
+  create_audit_report: {
+    args: ["project_name", "source_code", "owner"],
+    argTypes: ["string", "string", "string"],
+    argMaxPayloads: [80, 4000, 48],
+    maxPayload: 4000,
+    readMethod: "get_last_report_id",
+    returns: "id",
+  },
+  get_report: {
+    args: ["report_id"],
+    argTypes: ["u256"],
+    maxPayload: 0,
+    readMethod: "get_report",
+    returns: "json",
+  },
+  get_report_title: {
+    args: ["report_id"],
+    argTypes: ["u256"],
+    maxPayload: 0,
+    readMethod: "get_report_title",
+    returns: "text",
+  },
+  get_report_owner: {
+    args: ["report_id"],
+    argTypes: ["u256"],
+    maxPayload: 0,
+    readMethod: "get_report_owner",
+    returns: "address",
+  },
+  get_report_count: {
+    args: [],
+    maxPayload: 0,
+    readMethod: "get_report_count",
+    returns: "id",
+  },
+  get_last_report_id: {
+    args: ["owner"],
+    argTypes: ["address"],
+    maxPayload: 42,
+    readMethod: "get_last_report_id",
+    returns: "id",
+  },
+};
+
+const ALL_CONTRACT_METHODS: Record<string, ContractMethodSpec> = {
+  ...CONTRACT_METHODS,
+  ...CERTIFIED_REPORT_METHODS,
 };
 
 // ─── Arg Validation ────────────────────────────────────────────
@@ -68,7 +121,7 @@ export const CONTRACT_METHODS: Record<string, ContractMethodSpec> = {
  * Throws if mismatch — prevents invalid TX submission.
  */
 export function validateArgs(method: string, args: unknown[]): void {
-  const spec = CONTRACT_METHODS[method];
+  const spec = ALL_CONTRACT_METHODS[method];
   if (!spec) {
     throw new Error(`❌ Unknown contract method: ${method}`);
   }
@@ -82,16 +135,34 @@ export function validateArgs(method: string, args: unknown[]): void {
   // Validate each arg is a string and within payload limit
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
+    const expectedType = spec.argTypes?.[i] || "string";
+    if (expectedType === "u256") {
+      const validU256 = typeof arg === "number" || typeof arg === "bigint" || (typeof arg === "string" && /^\d+$/.test(arg));
+      if (!validU256) {
+        throw new Error(
+          `âŒ Arg[${i}] (${spec.args[i]}) for ${method} must be a u256-compatible value`
+        );
+      }
+      continue;
+    }
+    if (expectedType === "address") {
+      const validAddress = typeof arg === "string" && /^0x[a-fA-F0-9]{40}$/.test(arg);
+      if (!validAddress) {
+        throw new Error(`Arg[${i}] (${spec.args[i]}) for ${method} must be an address`);
+      }
+      continue;
+    }
     if (typeof arg !== "string") {
       throw new Error(
         `❌ Arg[${i}] (${spec.args[i]}) for ${method} must be a string, got ${typeof arg}`
       );
     }
-    if (arg.length > spec.maxPayload) {
+    const maxPayload = spec.argMaxPayloads?.[i] ?? spec.maxPayload;
+    if (maxPayload > 0 && arg.length > maxPayload) {
       logGL(`WARN: ${method} arg[${i}] truncated`, {
         original: arg.length,
-        max: spec.maxPayload,
-        truncatedTo: spec.maxPayload,
+        max: maxPayload,
+        truncatedTo: maxPayload,
       });
     }
   }
@@ -108,7 +179,7 @@ export function validateArgs(method: string, args: unknown[]): void {
  * Get the correct read method for a write method.
  */
 export function getReadMethod(writeMethod: string): string {
-  const spec = CONTRACT_METHODS[writeMethod];
+  const spec = ALL_CONTRACT_METHODS[writeMethod];
   if (!spec) {
     throw new Error(`❌ Unknown contract method: ${writeMethod}`);
   }
@@ -118,10 +189,10 @@ export function getReadMethod(writeMethod: string): string {
 /**
  * Truncate payload to contract's safe limit.
  */
-export function truncatePayload(method: string, payload: string): string {
-  const spec = CONTRACT_METHODS[method];
+export function truncatePayload(method: string, payload: string, argIndex: number = 0): string {
+  const spec = ALL_CONTRACT_METHODS[method];
   if (!spec) return payload;
-  return payload.slice(0, spec.maxPayload);
+  return payload.slice(0, spec.argMaxPayloads?.[argIndex] ?? spec.maxPayload);
 }
 
 // ─── Strict JSON Parsing ───────────────────────────────────────
@@ -206,14 +277,14 @@ export function validateAnalysisOutput(result: any): boolean {
 }
 
 /**
- * Validates simulate_consensus output is exactly "GOOD" or "BAD".
+ * Validates simulate_consensus output matches v2's first-word normalization.
  */
 export function validateSimulationVerdict(verdict: string): boolean {
   const normalized = verdict.trim().toUpperCase();
-  const valid = normalized === "GOOD" || normalized === "BAD";
+  const valid = /^[A-Z0-9]+$/.test(normalized);
 
   if (!valid) {
-    logGL("VALIDATION FAIL: Simulation verdict", { verdict, normalized, expected: "GOOD or BAD" });
+    logGL("VALIDATION FAIL: Simulation verdict", { verdict, normalized, expected: "non-empty normalized word" });
   } else {
     logGL("VALIDATION OK: Simulation verdict", { verdict: normalized });
   }
@@ -222,7 +293,7 @@ export function validateSimulationVerdict(verdict: string): boolean {
 }
 
 /**
- * Validates fix_contract output has changes_made array.
+ * Validates fix_contract output has fixes array.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function validateFixOutput(result: any): boolean {
@@ -231,12 +302,46 @@ export function validateFixOutput(result: any): boolean {
     return false;
   }
 
-  if (!Array.isArray(result.changes_made)) {
-    logGL("VALIDATION WARN: Fix output missing changes_made array", { hasFields: Object.keys(result) });
+  if (!Array.isArray(result.fixes)) {
+    logGL("VALIDATION WARN: Fix output missing fixes array", { hasFields: Object.keys(result) });
     return false;
   }
 
-  logGL("VALIDATION OK: Fix output", { changeCount: result.changes_made.length });
+  logGL("VALIDATION OK: Fix output", { fixCount: result.fixes.length });
+  return true;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function validateCertifiedReportOutput(result: any): boolean {
+  if (!result || typeof result !== "object") {
+    logGL("VALIDATION FAIL: Certified report output", { reason: "Not an object" });
+    return false;
+  }
+
+  const required = [
+    "risk_level",
+    "issues",
+    "warnings",
+    "prompt_quality",
+    "determinism_risk",
+    "consensus_risk",
+    "reasoning",
+    "fix_suggestions",
+  ];
+  const missing = required.filter((field) => !(field in result));
+  const valid =
+    missing.length === 0 &&
+    ["LOW", "MEDIUM", "HIGH"].includes(String(result.risk_level)) &&
+    ["LOW", "MEDIUM", "HIGH"].includes(String(result.consensus_risk)) &&
+    Array.isArray(result.issues) &&
+    Array.isArray(result.warnings);
+
+  if (!valid) {
+    logGL("VALIDATION FAIL: Certified report output", { missing, fields: Object.keys(result) });
+    return false;
+  }
+
+  logGL("VALIDATION OK: Certified report output", { risk: result.risk_level, consensusRisk: result.consensus_risk });
   return true;
 }
 

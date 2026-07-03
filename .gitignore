@@ -17,3 +17,10 @@ coverage/
 next-env.d.ts
 frontend/node_modules/
 frontend/.next/
+.codex-backup/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
